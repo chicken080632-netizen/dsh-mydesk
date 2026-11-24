@@ -6,7 +6,6 @@
 // <dshHome>/mydesk/files，工具写回的成品也落在 <dshHome>/mydesk 下，两边都不出圈。
 //
 // 拿不到可改图的工具时退化成"按提示词重画"，界面上会说明这次没有用原图当参考。
-import { randomUUID } from 'node:crypto'
 import { mkdir, open, realpath, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { imageBuffer } from './images.js'
@@ -14,6 +13,7 @@ import { generateToolImage } from './image-tool.js'
 import { tr } from './i18n.js'
 import { newId } from './ops.js'
 import { dshHome } from './store.js'
+import { callTool, pluginAgent } from './tool-run.js'
 
 const MAX_BYTES = 40_000_000
 const MAX_VARIANTS = 24
@@ -31,15 +31,7 @@ export function artRoot() {
 }
 
 function artAgent() {
-  const cwd = artRoot()
-  return {
-    id: 'mydesk-art',
-    session: {
-      header: { cwd },
-      append: () => ({ seq: 0 }),
-      deriveMessages: () => [],
-    },
-  }
+  return pluginAgent('mydesk-art', artRoot())
 }
 
 /**
@@ -117,20 +109,14 @@ function dataUrlBuffer(text) {
 
 /** 一次工具调用的结果：成功给出 value，失败给出人能看懂的理由。 */
 async function runTool(tool, args, signal) {
-  const id = `mydesk:${randomUUID()}`
-  const batch = await tool.tools.execute({
-    calls: [{ type: 'tool-call', id, name: tool.name, arguments: JSON.stringify(args) }],
-    agent: artAgent(),
-    signal,
-  })
-  signal.throwIfAborted()
-  const result = batch.results?.find(entry => entry.callId === id)?.result
-  if (result?.isError) {
-    if (result.error?.info?.code === 'UNKNOWN_TOOL') throw new Error(tr('当前工具执行器不支持直接调用图像工具，请改用原生工具执行器'))
-    throw new Error(tr('图像工具失败：{reason}', { reason: String(result.error?.message ?? '').slice(0, 500) }))
+  try {
+    return await callTool(tool.tools, tool.name, args, { signal, agent: artAgent() })
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error
+    if (error?.code === 'UNKNOWN_TOOL') throw new Error(tr('当前工具执行器不支持直接调用图像工具，请改用原生工具执行器'))
+    if (error?.fromTool) throw new Error(tr('图像工具失败：{reason}', { reason: String(error?.message ?? '').slice(0, 500) }))
+    throw error
   }
-  if (result?.isError !== false || !result?.value) throw new Error(tr('图像工具没有返回结果'))
-  return result.value
 }
 
 async function editWithReference(tool, { prompt, sourcePath, ratio, signal }) {

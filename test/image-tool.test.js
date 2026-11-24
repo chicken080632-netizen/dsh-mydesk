@@ -390,3 +390,23 @@ test('桥接模式的 HTTP 面板：内置桥接的就绪状态与试画', async
   assert.match(response.body.error, /generate_image/)
   assert.equal(seen.length, 1)
 }))
+
+test('桥接直接调工具体，不经过 tools.execute（Auto 复核会读真实会话，替身 agent 撑不住）', async () => fixture(async ({ dir }) => {
+  const outDir = join(dir, 'mydesk', 'generated')
+  await mkdir(outDir, { recursive: true })
+  const out = join(outDir, 'direct.png')
+  await writeFile(out, PNG)
+  let seen
+  const tools = {
+    executable: name => name === 'generate_image' ? { ...DRAW_DEFINITION, name, execute: async (args, exec) => { seen = { args, exec }; return { savedTo: out } } } : undefined,
+    selectExecutor: () => ({ describe: definitions => ({ schemas: definitions }) }),
+    execute: () => assert.fail('批量通道会触发 tools/pre-execute 的 Auto 复核，不该走'),
+  }
+  const drawn = await bridgeGenerate({ get: name => name === 'tools' ? tools : undefined }, { toolQuality: 'high' }, 'paper boat')
+  assert.equal(drawn.ext, '.png')
+  assert.deepEqual(seen.args, { prompt: 'paper boat', quality: 'high' })
+  // 替身 agent 的 cwd 就是插件数据目录：image-gen 据此把成品写进 mydesk 里
+  assert.equal(seen.exec.agent.session.header.cwd, join(dir, 'mydesk'))
+  assert.equal(seen.exec.name, 'generate_image')
+  assert.equal(typeof seen.exec.deferContext, 'function')
+}))

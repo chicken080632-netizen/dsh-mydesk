@@ -1,10 +1,10 @@
 // 订阅生图通过宿主公共执行接口调用，不读取登录凭证或引用订阅插件内部模块。
-import { randomUUID } from 'node:crypto'
 import { open, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { imageBuffer } from './images.js'
 import { tr } from './i18n.js'
 import { dshHome } from './store.js'
+import { callTool } from './tool-run.js'
 
 // 「DSH 生成工具」这一档认的订阅生图工具：别名优先，其次才是桥接/兼容名字。
 // 「桥接到 image-gen」不走这里，见 src/bridge.js（它直接转给 image-gen 的 generate_image）。
@@ -78,17 +78,20 @@ export async function generateToolImage(ctx, image, prompt, { signal } = {}) {
     const timeout = AbortSignal.timeout(300_000)
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
     combined.throwIfAborted()
-    const id = `mydesk:${randomUUID()}`
-    // 工作台是独立服务，无聊天 Agent、伪造会话或日志；全局执行策略仍由宿主管理。
-    const batch = await selected.tools.execute({ calls: [{ type: 'tool-call', id, name: selected.name, arguments: JSON.stringify(args) }], signal: combined })
-    combined.throwIfAborted()
-    const result = batch.results?.find(entry => entry.callId === id)?.result
-    if (result?.isError) {
-      if (result.error?.info?.code === 'UNKNOWN_TOOL') throw new Error(tr('当前工具执行器不支持直接生图调用，请使用原生工具执行器或 HTTP 生图'))
-      throw new Error(tr('生图工具失败：{reason}', { reason: String(result.error?.message ?? '').slice(0, 500) }))
+    // 工作台是独立服务，无聊天 Agent：直接调工具体，不走 tools/pre-execute 策略钩子
+    // （Auto 预设的自动复核会读真实会话日志，替身 agent 满足不了）。
+    let value
+    try {
+      value = await callTool(selected.tools, selected.name, args, { signal: combined })
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error
+      if (error?.code === 'UNKNOWN_TOOL') throw new Error(tr('当前工具执行器不支持直接生图调用，请使用原生工具执行器或 HTTP 生图'))
+      if (error?.fromTool) throw new Error(tr('生图工具失败：{reason}', { reason: String(error?.message ?? '').slice(0, 500) }))
+      throw error
     }
-    const path = result?.value?.paths?.[0]
-    if (result?.isError !== false || !path) throw new Error(tr('生图工具没有返回图片'))
+    combined.throwIfAborted()
+    const path = value?.paths?.[0]
+    if (!path) throw new Error(tr('生图工具没有返回图片'))
     return await readGeneratedImage(path, combined)
   } catch (error) {
     // 不叠加工作台的限流重试：账号切换/刷新已由工具处理，避免重复消耗额度。

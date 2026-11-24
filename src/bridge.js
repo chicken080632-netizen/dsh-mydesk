@@ -5,12 +5,12 @@
 // 和 src/art.js 一样，这里给工具一个只带 cwd 的替身 agent：generate_image 会把成品写进
 // exec.agent.session.header.cwd 下，而工作台是独立服务、没有聊天会话。把插件数据目录当作
 // 会话工作区，参考图与成品就都落在 ~/.dsh/mydesk 里，不出圈。
-import { randomUUID } from 'node:crypto'
 import { mkdir, open, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { imageBuffer } from './images.js'
 import { tr } from './i18n.js'
 import { dshHome } from './store.js'
+import { callTool, pluginAgent } from './tool-run.js'
 
 // 只认 dsh-image-gen 的文生图工具：桥接的意思就是"转给它"。
 const INNER_NAMES = ['generate_image']
@@ -23,15 +23,7 @@ export function bridgeRoot() {
 }
 
 function bridgeAgent() {
-  const cwd = bridgeRoot()
-  return {
-    id: 'mydesk-bridge',
-    session: {
-      header: { cwd },
-      append: () => ({ seq: 0 }),
-      deriveMessages: () => [],
-    },
-  }
+  return pluginAgent('mydesk-bridge', bridgeRoot())
 }
 
 /**
@@ -131,20 +123,17 @@ export async function bridgeGenerate(ctx, image, prompt, { signal } = {}) {
     const timeout = AbortSignal.timeout(TIMEOUT_MS)
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
     combined.throwIfAborted()
-    const id = `mydesk-bridge:${randomUUID()}`
-    const batch = await tool.tools.execute({
-      calls: [{ type: 'tool-call', id, name: tool.name, arguments: JSON.stringify(innerArgs(tool, image, prompt)) }],
-      agent: bridgeAgent(),
-      signal: combined,
-    })
-    combined.throwIfAborted()
-    const result = batch.results?.find(entry => entry.callId === id)?.result
-    if (result?.isError) {
-      if (result.error?.info?.code === 'UNKNOWN_TOOL') throw new Error(tr('当前工具执行器不支持直接调用生图工具，请改用原生工具执行器'))
-      throw new Error(tr('生图工具失败：{reason}', { reason: String(result.error?.message ?? '').slice(0, 500) }))
+    let value
+    try {
+      value = await callTool(tool.tools, tool.name, innerArgs(tool, image, prompt), { signal: combined, agent: bridgeAgent() })
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error
+      if (error?.code === 'UNKNOWN_TOOL') throw new Error(tr('当前工具执行器不支持直接调用生图工具，请改用原生工具执行器'))
+      if (error?.fromTool) throw new Error(tr('生图工具失败：{reason}', { reason: String(error?.message ?? '').slice(0, 500) }))
+      throw error
     }
-    if (result?.isError !== false || !result?.value) throw new Error(tr('生图工具没有返回结果'))
-    const value = result.value
+    combined.throwIfAborted()
+    if (!value) throw new Error(tr('生图工具没有返回结果'))
     const saved = typeof value.savedTo === 'string' && value.savedTo ? await readImageIn(value.savedTo).catch(() => null) : null
     const drawn = saved ?? dataUrlImage(value.output)
     if (!drawn) {
