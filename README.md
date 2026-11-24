@@ -67,6 +67,19 @@
 - 滚轮归属：画布的滚轮监听挂在 `.myd-stage` 上（`client/canvas.jsx` 的 `onWheel`，无条件 `preventDefault` 后平移/缩放）。内联卡片打开时，命中 `.myd-inline` 就**自己**改 `card.scrollTop`（`deltaMode` 为行时乘 16），既不吃画布手势，也不依赖浏览器把滚轮从 `overflow:hidden` 的 textarea 往祖先 scroller 上链。
 - 内联卡片的高度上限是 `min(620px, 78vh)`，窗口矮的时候不会顶出屏幕。
 
+## 已经加的功能：删除卡片
+
+原版只有助手能删卡，界面上找不到入口。现在有四条路，都走服务端那条 `delete_item`（自带回执 + 一步撤销，删错了点提示条上的「撤销」就回来）：
+
+| 位置 | 怎么删 |
+| --- | --- |
+| 画布 / 信息流里的卡片 | **右键** → 「删除卡片」；或者悬停卡片右上角的 🗑；或者 Tab 选中后按 `Delete` / `Backspace` |
+| 笔记、金句的就地放大（二级） | 头部 🗑 |
+| 图片、图库、视频的二级页 | 头部右侧 🗑 |
+| 全屏记录页（三级） | 头部右侧 🗑（原来就有） |
+
+实现：`client/menu.jsx` 的 `ContextMenu`（贴指针弹出、视口边缘自动翻、点外面 / Esc / 滚轮都关，且在捕获阶段拦事件，不让画布把这次点击当成平移）；`client/card.jsx` 接 `onDelete` / `onMenu` 两个回调并自己渲染那个悬停删除键；`client/canvas.jsx` 的 `Scatter` 与 `Feed` 各自持有菜单状态并调 `dispatchOps([{ op: 'delete_item', id }])`。图标按钮的悬停显隐在 `client/styles.css` 的 `.myd-card-del`，触屏（`@media (hover: none)`）上常显。
+
 ## 已经加的功能：图库（`kind: 'gallery'`）
 
 底部筛选条（图片 / 视频 / 网页 / 金句 / 笔记）后面多了一个 **图库**；「＋」新建里也多了「图库」一栏，建完直接进二级页。
@@ -127,6 +140,7 @@ client/         浏览器半片源码（jsx + styles.css），ESM 源码，不�
   gallery.jsx   图库：左边收图，右边连画（缩略图 / 铺开两种预览）
   board.jsx     图库的「铺开」画布：平移、缩放、拖动、对齐、组合
   snap.js       拖动吸附的数学（只算坐标和参考线，不碰 React）
+  menu.jsx      卡片右键菜单（打开 / 删除）
   styles.css    全部样式（类名一律 myd- 前缀）
   en/           英文词典（key 是中文原文）
 dist/client.js  打包产物：npm run build 生成，别手改

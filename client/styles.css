@@ -1059,3 +1059,35 @@ button.myd-receipt:hover { transform: translateX(2px); }
 .myd-bd-guide { position: absolute; z-index: 3; pointer-events: none; background: color-mix(in srgb, var(--primary) 72%, transparent); }
 .myd-bd-guide.is-v { top: 0; bottom: 0; width: 1px; }
 .myd-bd-guide.is-h { left: 0; right: 0; height: 1px; }
+
+/* 卡片上的删除键：平时藏起来，悬停或键盘聚焦才露出来，免得满屏都是按钮 */
+.myd-card-del {
+  position: absolute; right: 8px; top: 8px; z-index: 3;
+  display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border-radius: 50%; corner-shape: round; color: var(--ink2);
+  background: color-mix(in srgb, var(--card) 88%, transparent); backdrop-filter: blur(12px);
+  box-shadow: var(--dsw-elevation-soft);
+  opacity: 0; transform: translateY(-3px);
+  transition: opacity .18s, transform .26s var(--ease), background .15s, color .15s;
+}
+.myd-card:hover .myd-card-del, .myd-card:focus-within .myd-card-del, .myd-card-del:focus-visible { opacity: 1; transform: none; }
+.myd-card-del:hover { background: var(--card); color: var(--danger, #d64545); }
+@media (hover: none) { .myd-card-del { opacity: 1; transform: none; } }
+
+/* 右键菜单：贴在指针上，视口边缘会自己翻进来 */
+.myd-menu {
+  position: fixed; z-index: 60; min-width: 152px; padding: 5px;
+  display: flex; flex-direction: column;
+  border-radius: 12px; background: var(--card);
+  box-shadow: 0 0 0 .5px var(--line), 0 18px 42px -14px rgb(0 0 0 / .42);
+  animation: myd-menu-in .14s var(--ease) both;
+}
+@keyframes myd-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+.myd-menu-item { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px; color: var(--ink); font-size: 12.5px; text-align: left; }
+.myd-menu-item:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.myd-menu-item.is-danger { color: var(--danger, #d64545); }
+.myd-menu-item.is-danger:hover { background: color-mix(in srgb, var(--danger, #d64545) 12%, transparent); }
+@media (prefers-reduced-motion: reduce) { .myd-menu { animation: none; } }
+
+/* 二级页头部把删除键推到最右 */
+.myd-head-gap { flex: 1; min-width: 0; }

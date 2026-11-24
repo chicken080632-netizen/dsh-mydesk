@@ -1,7 +1,7 @@
 // 图片卡片的二级页：一张工作台，左边看这张图，右边说要怎么改，改完的新一版排在下面。
 // 参考图就是这张图本身；模型改不动时 Host 会退一步按描述重画，界面上会标出来。
 import React from 'react'
-import { closeItem, dropVariant, remixArt, toast, useDesk, useVariant } from './desk.js'
+import { closeItem, dispatchOps, dropVariant, remixArt, toast, useDesk, useVariant } from './desk.js'
 import { t } from './i18n.js'
 import { Icon, IconButton } from './ui.jsx'
 import { fmtWhen } from './util.js'
@@ -103,6 +103,16 @@ export function ArtStudio({ item }) {
     input.current?.focus()
   }
 
+  // 删掉整张卡片（连带它所有版本），服务端留一步撤销
+  const removeCard = async () => {
+    try {
+      closeItem()
+      await dispatchOps([{ op: 'delete_item', id: item.id }], { label: t('删除《{title}》', { title: item.title }) })
+    } catch (err) {
+      toast(err.message, { error: true })
+    }
+  }
+
   const actionable = Boolean(capabilities?.ready)
   // host 半片还是旧版时 settings 里没有 art 这个键：说清楚是要重启 DSH，别让人干等
   const staleHost = Boolean(settings) && !('art' in settings)
@@ -121,6 +131,7 @@ export function ArtStudio({ item }) {
             {t('下载')}
           </a>
         ) : null}
+        <IconButton icon="trash" label={t('删除卡片')} onClick={() => removeCard()} />
       </header>
 
       <div className="myd-art-body">

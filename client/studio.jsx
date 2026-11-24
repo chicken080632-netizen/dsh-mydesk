@@ -606,6 +606,15 @@ export function Studio() {
                 <>
                   <IconButton icon="chevL" label={t('返回灵感')} onClick={closeItem} />
                   <h2>{t('成稿')}</h2>
+                  <span className="myd-head-gap" />
+                  <IconButton icon="trash" label={t('删除卡片')} onClick={async () => {
+                    closeItem()
+                    try {
+                      await dispatchOps([{ op: 'delete_item', id: item.id }], { label: t('删除《{title}》', { title: item.title }) })
+                    } catch (error) {
+                      toast(error.message, { error: true })
+                    }
+                  }} />
                 </>
               )}
               top={<IdeaCard item={item} live={live} settings={settings} />}

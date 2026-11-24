@@ -54,7 +54,7 @@ function GalleryCover({ item }) {
   )
 }
 
-export function Card({ item: raw, onOpen }) {
+export function Card({ item: raw, onOpen, onDelete, onMenu }) {
   const item = displayItem(raw)
   const inverted = item.pinned
   const running = item.production?.status === 'running'
@@ -72,13 +72,38 @@ export function Card({ item: raw, onOpen }) {
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
       onClick={event => onOpen?.(raw, event)}
+      onContextMenu={(event) => {
+        if (!onMenu) return
+        event.preventDefault()
+        event.stopPropagation()
+        onMenu(raw, event)
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           onOpen?.(raw, event)
+          return
+        }
+        // 卡片拿到焦点时，Delete / Backspace 直接删（服务端留了撤销）
+        if ((event.key === 'Delete' || event.key === 'Backspace') && onDelete) {
+          event.preventDefault()
+          onDelete(raw)
         }
       }}
     >
+      {onDelete ? (
+        <button
+          type="button"
+          className="myd-card-del"
+          aria-label={t('删除卡片')}
+          title={t('删除卡片')}
+          tabIndex={-1}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={(event) => { event.stopPropagation(); onDelete(raw) }}
+        >
+          <Icon name="trash" size={13} />
+        </button>
+      ) : null}
       {hasMedia ? (
         <div className="myd-card-media" data-media={item.id}>
           <Media item={item} autoPlay={hover} />

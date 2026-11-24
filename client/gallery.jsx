@@ -1,6 +1,6 @@
 // 图库：一边管图，一边出图。左边是已经画出来的所有图，右边是生图面板。
 import React from 'react'
-import { addGalleryFiles, closeItem, dropVariant, galleryMake, saveBoardLayout, toast, uploadFile, useDesk, useVariant } from './desk.js'
+import { addGalleryFiles, closeItem, dispatchOps, dropVariant, galleryMake, saveBoardLayout, toast, uploadFile, useDesk, useVariant } from './desk.js'
 import { GalleryBoard } from './board.jsx'
 import { t } from './i18n.js'
 import { fmtWhen } from './util.js'
@@ -189,6 +189,16 @@ export function GalleryStudio({ item }) {
     }
   }
 
+  // 删掉整个图库卡片（连带里面所有图），服务端留一步撤销
+  const removeCard = async () => {
+    try {
+      closeItem()
+      await dispatchOps([{ op: 'delete_item', id: item.id }], { label: t('删除《{title}》', { title: item.title }) })
+    } catch (error) {
+      toast(error.message, { error: true })
+    }
+  }
+
   const pick = (shot) => {
     const next = picked === shot.id ? null : shot.id
     setPicked(next)
@@ -221,6 +231,7 @@ export function GalleryStudio({ item }) {
             { value: 'board', label: t('铺开'), title: t('铺开：按原比例摆在一块画布上') },
           ]} />
           <span className="myd-gal-hint">{mode === 'grid' && shots.length ? t('点一张选中，作为下一轮的参考') : ''}</span>
+          <IconButton icon="trash" label={t('删除卡片')} onClick={() => removeCard()} />
         </header>
 
         {mode === 'board' ? (

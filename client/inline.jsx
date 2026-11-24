@@ -11,6 +11,11 @@ export function InlineCard({ item }) {
   const title = item.title || t(KIND_LABEL[kind])
   const commit = fields => dispatchOps([{ op: 'update_item', id: item.id, ...fields }], { label: t('改《{title}》', { title }), silent: true })
   const words = textLength(item.title) + textLength(item.body)
+  // 就地删除：服务端留一步撤销
+  const remove = async () => {
+    closeInline()
+    await dispatchOps([{ op: 'delete_item', id: item.id }], { label: t('删除《{title}》', { title }) })
+  }
 
   return (
     <article className={`myd-inline kind-${kind}`} data-inline={item.id}>
@@ -22,6 +27,7 @@ export function InlineCard({ item }) {
         <span className="myd-inline-time">{fmtWhen(item.createdAt)}</span>
         <span className="myd-inline-gap" />
         <IconButton icon="expand" label={t('放大到全屏')} onClick={() => openItem(item.id)} />
+        <IconButton icon="trash" label={t('删除卡片')} onClick={remove} />
         <IconButton icon="close" label={t('收起')} onClick={closeInline} />
       </header>
 

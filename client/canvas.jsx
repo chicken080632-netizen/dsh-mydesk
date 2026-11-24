@@ -1,10 +1,11 @@
-﻿// 首页：一句话记一个灵感。灵感可以散落在空间里，也可以按时间排成信息流。
+// 首页：一句话记一个灵感。灵感可以散落在空间里，也可以按时间排成信息流。
 import React from 'react'
 import { Card, openCapture } from './card.jsx'
 import { captureFiles, captureUrl, closeInline, dispatchOps, openInline, openItem, setDesk, useDesk } from './desk.js'
 import { plural, t } from './i18n.js'
 import { Icon, IconButton, Segmented } from './ui.jsx'
 import { InlineCard } from './inline.jsx'
+import { ContextMenu } from './menu.jsx'
 import { MiniStamps } from './stamps.jsx'
 import { cardSize, scatterLayout } from './layout.js'
 import { relatedIdeas, relatedLayout } from './related.js'
@@ -120,7 +121,7 @@ function Hero() {
   )
 }
 
-function Node({ item, pos, index, entered, onOpen, tone, inline }) {
+function Node({ item, pos, index, entered, onOpen, onDelete, onMenu, tone, inline }) {
   const ref = React.useRef(null)
   React.useLayoutEffect(() => {
     if (entered.current.has(item.id)) return
@@ -141,7 +142,7 @@ function Node({ item, pos, index, entered, onOpen, tone, inline }) {
       data-node={item.id}
       style={{ left: pos.x, top: pos.y, ...(inline ? {} : { width: size.w }), '--r': `${inline ? 0 : pos.r ?? 0}deg`, '--d': inline ? 0 : pos.d ?? 0 }}
     >
-      <div className="myd-pop">{inline ? <InlineCard item={item} /> : <Card item={item} onOpen={onOpen} />}</div>
+      <div className="myd-pop">{inline ? <InlineCard item={item} /> : <Card item={item} onOpen={onOpen} onDelete={onDelete} onMenu={onMenu} />}</div>
     </div>
   )
 }
@@ -314,6 +315,23 @@ function Scatter() {
     openItem(item.id, originOf(event))
   }, [inlineId])
 
+  const removeCard = React.useCallback(async (row) => {
+    if (inlineId === row.id) closeInline()
+    // 服务端 delete_item 自带回执和一步撤销，提示里就能撤回
+    await dispatchOps([{ op: 'delete_item', id: row.id }], { label: t('删除《{title}》', { title: row.title }) })
+  }, [inlineId])
+
+  const [menu, setMenu] = React.useState(null)
+  const openMenu = React.useCallback((row, event) => {
+    setMenu({ id: row.id, x: event.clientX, y: event.clientY })
+  }, [])
+  const menuRow = menu ? shown.find(row => row.id === menu.id) ?? null : null
+
+  const openFromMenu = (row) => {
+    if (row.kind === 'note' || row.kind === 'quote') openInline(row.id)
+    else openItem(row.id)
+  }
+
   const onPointerDown = (event) => {
     if (event.button !== 0 || event.target.closest('input,textarea,button:not(.myd-card),.myd-toolrow,.myd-ministamps')) return
     const cardEl = event.target.closest('[data-node]')
@@ -463,8 +481,18 @@ function Scatter() {
     >
       <div className="myd-world" ref={worldRef}>
         <div className="myd-hero-anchor"><Hero /></div>
-        {shown.map((item, index) => <Node key={item.id} item={item} pos={posOf(item)} index={index} entered={entered} onOpen={openCard} tone={toneOf(item)} inline={inlineId === item.id} />)}
+        {shown.map((item, index) => <Node key={item.id} item={item} pos={posOf(item)} index={index} entered={entered} onOpen={openCard} onDelete={removeCard} onMenu={openMenu} tone={toneOf(item)} inline={inlineId === item.id} />)}
       </div>
+      {menuRow ? (
+        <ContextMenu
+          at={menu}
+          onClose={() => setMenu(null)}
+          items={[
+            { icon: 'expand', label: t('打开'), onClick: () => openFromMenu(menuRow) },
+            { icon: 'trash', label: t('删除卡片'), danger: true, onClick: () => removeCard(menuRow) },
+          ]}
+        />
+      ) : null}
       <div className="myd-toolrow myd-toolrow-right" onPointerDown={e => e.stopPropagation()}>
         <IconButton icon="zoomOut" label={t('缩小')} onClick={() => zoomAt(0.8, ...center(), false)} />
         <IconButton icon="target" label={t('回到中心')} onClick={() => flyTo(frameHome())} />
@@ -479,6 +507,11 @@ function Feed() {
   const items = useDesk(s => s.state.items)
   const kind = useDesk(s => s.kindFilter)
   const related = useDesk(s => s.related)
+  const [menu, setMenu] = React.useState(null)
+  const removeCard = React.useCallback(async (row) => {
+    await dispatchOps([{ op: 'delete_item', id: row.id }], { label: t('删除《{title}》', { title: row.title }) })
+  }, [])
+  const menuRow = menu ? items.find(row => row.id === menu.id) ?? null : null
   const rank = id => (related ? related.ids.indexOf(id) : -1)
   const sorted = React.useMemo(() => items
     .filter(i => isIdea(i) && (kind === 'all' || displayItem(i).kind === kind))
@@ -496,10 +529,20 @@ function Feed() {
       <div className="myd-wall">
         {sorted.map((item, index) => (
           <div key={item.id} className={`myd-wall-cell${rank(item.id) >= 0 ? ' is-related' : ''}`} style={{ animationDelay: `${Math.min(index * 22, 400)}ms` }}>
-            <Card item={item} onOpen={(row, event) => openItem(row.id, originOf(event))} />
+            <Card item={item} onOpen={(row, event) => openItem(row.id, originOf(event))} onDelete={removeCard}
+              onMenu={(row, event) => setMenu({ id: row.id, x: event.clientX, y: event.clientY })} />
           </div>
         ))}
       </div>
+      {menuRow ? (
+        <ContextMenu
+          at={menu}
+          onClose={() => setMenu(null)}
+          items={[
+            { icon: 'trash', label: t('删除卡片'), danger: true, onClick: () => removeCard(menuRow) },
+          ]}
+        />
+      ) : null}
     </div>
   )
 }
