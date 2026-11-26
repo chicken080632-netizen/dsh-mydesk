@@ -93,13 +93,15 @@
 - 文生图工具的参数按工具自己的声明来发：`drawArgs()` 看到 `aspect_ratio` 就传画幅，只认 `size` 就把画幅映射成 `SIZE_OF` 里的 `1024x1024 / 1536x1024 / 1024x1536`，枚举里没有就退 `auto`。
 - 助手也能建图库：`add_item { kind: 'gallery' }`（`src/ops.js` 的 `KINDS`、`src/ai.js` 的 `OP_DOC` 已同步）。
 - 左栏有**两种预览模式**（头部「预览模式」切换，选择会存在卡片上）：「缩略图」是一张张方图排下去；「铺开」把整个左栏变成一块能拖能缩的画布（`client/board.jsx` 的 `GalleryBoard`），图片按**原始比例**摆着，不裁不缩。
-  - 画布：拖空白处平移，滚轮以光标为中心缩放（20%–400%），底部条有「适应窗口」和点百分比回 100%。
-  - 图片：点一张选中（描边），Shift/Cmd 点击增减选；拖任意一张会带着**整组/整个选区**一起动；方向键微移 1px（按 Shift 是 10px）。
+  - 画布：拖空白处**框选**（橡皮筋矩形，碰到就算选中，Shift/Cmd 追加到原选区），**右键拖动**或**按住空格拖动**才平移（中键拖动也行），滚轮以光标为中心缩放（20%–400%），底部条有「适应窗口」和点百分比回 100%。画布里的右键菜单被关掉，免得拖到一半弹出来。
+  - 图片：点一张选中（描边），Shift/Cmd 点击增减选；拖任意一张会带着**整组/整个选区**一起动（拖的要是**已选中**的那张才带全选，拖没选中的只会拖它自己，这条规则在 `client/select.js` 的 `dragTarget`）——多选之后点一下（不拖）会收敛成只选这一张；方向键微移 1px（按 Shift 是 10px）。
+  - 选中：底部条有「全选」「反选」「清除选择」，`Ctrl/Cmd+A` 全选、`Esc` 清空；点一下空白（位移 < 3px）也会清空选区，框选则按矩形替换或追加。纯数学在 `client/select.js`（`rectFrom` / `worldRect` / `hitsInRect` / `mergeSelection` / `invertSelection`），组件只负责把指针事件喂进去。
   - 对齐：底部工具条六个方向（左/横中/右/上/纵中/下）按选区包围盒对齐，横、纵均分要求至少 3 张（两端不动、中间等距）。
   - 吸附：拖动时选区的左/中/右、上/中/下 会自动贴到别的图的同名基准上，屏幕上差 7px 以内就吸住（缩放越大，世界坐标里的吸附距离越小），吸住时画一条参考线；按住 **Alt** 拖可临时关掉。纯数学在 `client/snap.js`（`snapDrag` / `snapDragFrom`），组件只负责把它接到指针事件上。
     - 不抖的两个前提：① 吸住之后**锁住这个基准**（`SNAP_HOLD`，只有真拉出吸附距离才换），否则两个候选基准挨得近时指针原地一毫米来回就会在两个目标之间跳；② 算包围盒要用**按下时的位置**（`snapDragFrom` 的 `start`），拿当前位置算会把位移每帧重复加一遍，拖久了吸附会在完全无关的地方触发。
   - 组合：「组合」给选中的几张打同一个 `group` 标记，之后点其中任意一张就整组选中一起拖；「取消组合」只删标记，不动位置。
   - 落盘：位置/缩放/平移存在 `item.art.board`（`normalizeBoard` 会把越界值夹回来、最多 300 条），改完 700ms 防抖存一次，走 `POST /mydesk/art/board`，**不进撤销栈**（排版不算内容改动），刷新后回来还是原样。
+  - 撤销：正因为排版不进插件的撤销栈，画布自己留了一份历史——拖动（真挪动过才算）、对齐、均分、组合/取消组合、方向键微移各算一步，`Ctrl/Cmd+Z` 撤、`Ctrl/Cmd+Shift+Z`（或 `Ctrl+Y`）重做，底部条也有两个按钮。这两个键在**捕获阶段**被画布接住并 `stopImmediatePropagation`，所以不会冒泡去撤插件根画布上的卡片；焦点在输入框里时不抢（那里该撤的是打的字）。历史只存在内存里（最多 60 步），刷新即清空。
   - 新图第一次进「铺开」时按原比例自动货架式排一下（行宽 1480，行距 26），已经在画布上的图不会被重排。
 
 ## 已经加的功能：生图来源多一档「桥接到 image-gen」
@@ -138,14 +140,16 @@ client/         浏览器半片源码（jsx + styles.css），ESM 源码，不�
   record.jsx    笔记 / 金句 / 网页的记录页
   art.jsx       图片二创台
   gallery.jsx   图库：左边收图，右边连画（缩略图 / 铺开两种预览）
-  board.jsx     图库的「铺开」画布：平移、缩放、拖动、对齐、组合
+  board.jsx     图库的「铺开」画布：平移、缩放、框选、拖动、对齐、组合
+  select.js     框选的数学（矩形规范化 / 屏幕↔世界坐标 / 命中 / 追加 / 反选）
+history.js    画布自己的撤销栈（压栈 / 连续微移合并 / 撤销重做 / 60 步上限）
   snap.js       拖动吸附的数学（只算坐标和参考线，不碰 React）
   menu.jsx      卡片右键菜单（打开 / 删除）
   styles.css    全部样式（类名一律 myd- 前缀）
   en/           英文词典（key 是中文原文）
 dist/client.js  打包产物：npm run build 生成，别手改
 assets/         示例图与素材（打包进插件）
-test/           node --test 测试，145 条全绿
+test/           node --test 测试，162 条全绿
 scripts/        构建（build.mjs）与本地开发工具（mock 模型、mock monid、沙箱启动）
 ```
 
@@ -157,7 +161,7 @@ scripts/        构建（build.mjs）与本地开发工具（mock 模型、mock 
 npm install        # 只需要一次，装 esbuild
 npm run build      # 改完 client/ 里的东西必须跑，产出 dist/client.js
 npm run watch      # 边改边构建
-npm test           # 121 条测试
+npm test           # 162 条测试
 ```
 
 改完怎么生效：
@@ -185,6 +189,26 @@ CSS 前缀是 `myd-` 不是 `md-`：两个插件同时加载，样式都在全�
 - `C:\Users\msi\.dsh\mydesk\files\`：上传和生成的图片/视频，`state.json` 里的 `src` 形如 `mydesk/files/<名字>`，由 `/mydesk/files/<名字>` 这个路由提供。
 - 撤销栈不落盘会话，最多 30 步。
 - 想回到干净状态：停用插件、删掉 `~/.dsh/mydesk`、再启用。
+
+## 版本
+
+当前版本 **2.8.3**。装法两种，任选：
+
+```bash
+npm i dsh-mydesk@2.8.3        # 从 npm 装（包内含 src/ client/ scripts/ dist/，可以继续改界面源码）
+# 或在 DSH 里让 agent 用 plugin_manager install_bundle 指向本地解压后的目录
+```
+
+已发布的版本各自加了什么：
+
+| 版本 | 加了什么 |
+|---|---|
+| 2.8.0 | 首次上 npm/GitHub；包内带上 `client/`、`scripts/`（别人也能改界面再 `npm run build`） |
+| 2.8.1 | 「桥接到 image-gen」改成**内置**（`src/bridge.js`，不用再装中转插件）；改成直接执行工具体（`src/tool-run.js`），绕开需要真实会话的 Auto 复核——修掉 `session.snapshotEvents is not a function` |
+| 2.8.2 | 删除卡片：右键菜单（`client/menu.jsx`）、悬停删除钮、`Delete`/`Backspace`、各二级页头部删除 |
+| 2.8.3 | 「铺开」画布：框选 / Shift 追加、`Ctrl+A` 全选、`Esc` 清空、多选整组拖动（`client/select.js` 的 `dragTarget`）、右键或空格平移、图片间吸附（`client/snap.js`）、画布自己的撤销重做（`client/history.js`，`Ctrl+Z` / `Ctrl+Shift+Z`）、去掉空格时的白框 |
+
+排障：`npm i dsh-mydesk` 装到的版本比 npm 上旧，多半是镜像或缓存——`npm view dsh-mydesk version --prefer-online`，再用 `npm i dsh-mydesk@latest --prefer-online`；国内镜像可 `PUT https://registry.npmmirror.com/dsh-mydesk/sync?sync_upstream=true` 触发同步。
 
 ## License
 

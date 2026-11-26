@@ -1028,7 +1028,9 @@ button.myd-receipt:hover { transform: translateX(2px); }
 .myd-bd { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .myd-bd-surface { position: relative; flex: 1; min-height: 0; overflow: hidden; outline: none; cursor: grab; touch-action: none; background-color: color-mix(in srgb, var(--ink) 3%, var(--canvas)); background-image: radial-gradient(circle, color-mix(in srgb, var(--ink) 15%, transparent) 1px, transparent 1px); background-size: 24px 24px; }
 .myd-bd-surface:active { cursor: grabbing; }
-.myd-bd-surface:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent); }
+/* 画布自己不做键盘焦点框：按空格平移时浏览器会把焦点框画成一圈白边，看起来像选中了整个画布 */
+.myd-bd-surface:focus,
+.myd-bd-surface:focus-visible { outline: none; box-shadow: none; }
 .myd-bd-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .myd-bd-item { position: absolute; margin: 0; border-radius: 10px; overflow: hidden; background: var(--card); cursor: grab; user-select: none; touch-action: none; box-shadow: 0 0 0 .5px var(--line), 0 18px 40px -26px rgb(0 0 0 / .55); }
 .myd-bd-item img { display: block; width: 100%; height: auto; pointer-events: none; }
@@ -1048,6 +1050,9 @@ button.myd-receipt:hover { transform: translateX(2px); }
 .myd-bd-zoom { display: flex; align-items: center; gap: 2px; }
 .myd-bd-icon { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; color: var(--ink3); }
 .myd-bd-icon:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.myd-bd-icon:disabled { opacity: .34; cursor: default; }
+.myd-bd-icon:disabled:hover { background: none; }
+.myd-bd-flip { display: inline-flex; transform: scaleX(-1); }
 .myd-bd-pct { min-width: 48px; padding: 4px 6px; border-radius: 7px; color: var(--ink3); text-align: center; font-variant-numeric: tabular-nums; }
 .myd-bd-pct:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 @container myd-root (max-width: 1024px) {
@@ -1059,6 +1064,19 @@ button.myd-receipt:hover { transform: translateX(2px); }
 .myd-bd-guide { position: absolute; z-index: 3; pointer-events: none; background: color-mix(in srgb, var(--primary) 72%, transparent); }
 .myd-bd-guide.is-v { top: 0; bottom: 0; width: 1px; }
 .myd-bd-guide.is-h { left: 0; right: 0; height: 1px; }
+
+/* 框选的橡皮筋：跟着指针走，碰到哪张就算选到哪张 */
+.myd-bd-marq {
+  position: absolute; z-index: 4; pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--primary) 72%, transparent);
+  background: color-mix(in srgb, var(--primary) 13%, transparent);
+  border-radius: 2px;
+}
+.myd-bd-surface.is-space { cursor: grab; }
+.myd-bd-surface.is-marquee { cursor: crosshair; }
+.myd-bd-surface.is-marquee:active { cursor: crosshair; }
+.myd-bd-btn[disabled] { opacity: .4; cursor: default; }
+.myd-bd-btn[disabled]:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
 
 /* 卡片上的删除键：平时藏起来，悬停或键盘聚焦才露出来，免得满屏都是按钮 */
 .myd-card-del {
