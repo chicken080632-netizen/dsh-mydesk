@@ -72,7 +72,7 @@ export function artState(ctx) {
 }
 
 /** 有界读取：只认插件数据目录里的普通图片。 */
-async function readImageFile(path) {
+export async function readImageFile(path) {
   if (typeof path !== 'string' || !isAbsolute(path)) throw new Error(tr('图像工具返回的图片路径无效'))
   const root = await realpath(artRoot())
   const file = await realpath(path)
@@ -164,7 +164,7 @@ async function drawFromPrompt(tool, { prompt, ratio, signal }) {
 }
 
 /** 卡片里的图 → 插件数据目录里的真实文件。 */
-async function sourcePathOf(src) {
+export async function sourcePathOf(src) {
   const prefix = 'mydesk/files/'
   if (typeof src !== 'string' || !src.startsWith(prefix)) return null
   const name = src.slice(prefix.length)
@@ -189,6 +189,18 @@ function pickSource(item, wanted) {
   return variants.length ? variants[variants.length - 1].src : null
 }
 
+/** 参考图优先级：对话里带上的第一张 → 选中的那一版 → 封面 → 最后一版。路径必须落在插件目录里。 */
+async function pickSourceWith(item, wanted, refs = []) {
+  const first = refs[0]?.src
+  if (first) {
+    const path = await sourcePathOf(first)
+    if (path) return { src: first, path }
+  }
+  const src = pickSource(item, wanted)
+  const path = src ? await sourcePathOf(src) : null
+  return src && path ? { src, path } : null
+}
+
 async function saveIntoFiles(image) {
   const dir = join(artRoot(), 'files')
   await mkdir(dir, { recursive: true })
@@ -199,7 +211,11 @@ async function saveIntoFiles(image) {
 
 function variantOf(item) {
   const art = item.art && typeof item.art === 'object' ? item.art : {}
-  return { ...art, variants: Array.isArray(art.variants) ? art.variants : [] }
+  return {
+    ...art,
+    variants: Array.isArray(art.variants) ? art.variants : [],
+    thread: Array.isArray(art.thread) ? art.thread : [],
+  }
 }
 
 function badRequest(message, status = 400) {
@@ -260,41 +276,76 @@ export async function remixArt(ctx, store, body) {
   return { state: next, variant, art: artState(ctx) }
 }
 
+/** 图库右侧「生图对话」最多留 60 条，够回看一阵子，又不至于把 state 撑大。 */
+export const THREAD_MAX = 60
+
+/** 把请求里的引用收成 `{ src, label }`：只留插件目录里的图，最多 4 张，重复的去掉。 */
+async function threadRefs(raw) {
+  const rows = (Array.isArray(raw) ? raw : []).slice(0, 4)
+  const refs = []
+  for (const row of rows) {
+    const src = typeof row === 'string' ? row : row?.src
+    if (!src || refs.some(entry => entry.src === src)) continue
+    if (!(await sourcePathOf(src))) continue
+    const label = String(typeof row === 'string' ? '' : row?.label ?? '').trim().slice(0, 60)
+    refs.push({ src, ...(label ? { label } : {}) })
+  }
+  return refs
+}
+
 /**
- * 图库：按一句话连画几张，全部收进 `item.art.variants`。
- * 有参考图（选中的那张 / 封面 / 上一版）就接着它改，没有就让文生图工具从零画。
+ * 图库：按一句话连画几张，全部收进 `item.art.variants`，并把这一问一答记进 `item.art.thread`。
+ * 有参考图（对话里带上的那张 / 选中的那张 / 封面 / 上一版）就接着它改，没有就让文生图工具从零画。
  * @param {object} ctx - Cordis 上下文。
  * @param {object} store - 状态仓库。
- * @param {{id: string, prompt?: string, ratio?: string, count?: number, source?: string}} body - 请求体。
- * @returns {Promise<{state: object, added: object[], art: object}>}
+ * @param {{id: string, text?: string, prompt?: string, ratio?: string, count?: number, source?: string, refs?: (string|object)[]}} body - 请求体。
+ * @returns {Promise<{state: object, added: object[], thread: object[], art: object, error?: string}>}
  */
 export async function galleryMake(ctx, store, body) {
   const state = await store.read()
   const item = state.items.find(row => row.id === body.id)
   if (!item) throw badRequest(tr('找不到这个图库'), 404)
   if (item.kind !== 'gallery') throw badRequest(tr('只有图库可以这样连画几张'))
-  const prompt = String(body.prompt ?? '').trim().slice(0, 2000)
-  if (!prompt) throw badRequest(tr('先写一句想要什么画面'))
-  const tool = artTool(ctx)
-  if (!tool) throw badRequest(tr('没有可用的图像工具；先在设置里接入生图模型'))
-  const ratio = RATIOS.includes(body.ratio) ? body.ratio : undefined
+  const text = String(body.text ?? body.prompt ?? '').trim().slice(0, 2000)
+  if (!text) throw badRequest(tr('先写一句想要什么画面'))
+  const refs = await threadRefs(body.refs)
   const count = Math.min(Math.max(Math.round(Number(body.count) || 1), 1), 4)
-  const signal = AbortSignal.timeout(300_000 * count)
-  const source = pickSource(item, body.source)
-  const sourcePath = source ? await sourcePathOf(source) : null
+  const ratio = RATIOS.includes(body.ratio) ? body.ratio : undefined
+
+  // 用户这句话先进对话：就算这次一张都没画出来，话也不会丢
+  const append = (entry) => store.mutate(tr('生图对话'), (draft) => {
+    const row = draft.items.find(item => item.id === body.id)
+    if (!row) throw badRequest(tr('找不到这个图库'), 404)
+    const art = variantOf(row)
+    row.art = { ...art, thread: [...art.thread, entry].slice(-THREAD_MAX) }
+    return draft
+  }, { undoable: false })
+
+  const userEntry = { id: newId('t'), at: new Date().toISOString(), role: 'user', text, ...(refs.length ? { refs } : {}) }
+  await append(userEntry)
+
+  const tool = artTool(ctx)
+  if (!tool) {
+    const error = tr('没有可用的图像工具；先在设置里接入生图模型')
+    const next = await append({ id: newId('t'), at: new Date().toISOString(), role: 'assistant', error })
+    const saved = next.items.find(row => row.id === body.id)
+    return { state: next, added: [], thread: variantOf(saved).thread, art: artState(ctx), error }
+  }
+
+  const source = await pickSourceWith(item, body.source, refs)
   const added = []
   let failure = null
   for (let index = 0; index < count; index += 1) {
-    signal.throwIfAborted()
     try {
-      const drawn = tool.edit && sourcePath
-        ? await editWithReference({ ...tool.edit, tools: tool.tools }, { prompt, sourcePath, ratio, signal })
-        : await drawFromPrompt(tool, { prompt, ratio, signal })
+      const signal = AbortSignal.timeout(300_000)
+      const drawn = tool.edit && source?.path
+        ? await editWithReference({ ...tool.edit, tools: tool.tools }, { prompt: text, sourcePath: source.path, ratio, signal })
+        : await drawFromPrompt(tool, { prompt: text, ratio, signal })
       const createdAt = new Date().toISOString()
       added.push({
         id: newId('v'),
         src: await saveIntoFiles(drawn.image),
-        prompt,
+        prompt: text,
         mode: drawn.mode,
         createdAt,
         ...(ratio ? { ratio } : {}),
@@ -302,25 +353,46 @@ export async function galleryMake(ctx, store, body) {
         ...(drawn.model ? { model: drawn.model } : {}),
       })
     } catch (error) {
-      signal.throwIfAborted()
+      if (error?.name === 'AbortError') throw error
       if (!failure) failure = error
     }
   }
-  if (!added.length) throw failure ?? badRequest(tr('这次一张都没画出来'))
-  const next = await store.mutate(tr('往图库里画了 {n} 张', { n: added.length }), (draft) => {
+
+  const saved = await store.mutate(tr('往图库里画了 {n} 张', { n: added.length }), (draft) => {
     const row = draft.items.find(entry => entry.id === body.id)
     if (!row) throw badRequest(tr('找不到这个图库'), 404)
     const art = variantOf(row)
+    const entry = {
+      id: newId('t'),
+      at: new Date().toISOString(),
+      role: 'assistant',
+      ...(added.length
+        ? {
+            text: added.length < count
+              ? tr('画好了 {n} 张，另外 {m} 张没画出来', { n: added.length, m: count - added.length })
+              : tr('画好了 {n} 张', { n: added.length }),
+            added: added.map(row => row.id),
+          }
+        : { error: String(failure?.message ?? tr('这次一张都没画出来')).slice(0, 300) }),
+    }
     row.art = {
       ...art,
-      prompt,
-      updatedAt: added[added.length - 1].createdAt,
-      variants: [...art.variants, ...added].slice(-GALLERY_MAX),
+      prompt: text,
+      updatedAt: added.length ? added[added.length - 1].createdAt : art.updatedAt,
+      variants: added.length ? [...art.variants, ...added].slice(-GALLERY_MAX) : art.variants,
+      thread: [...art.thread, entry].slice(-THREAD_MAX),
     }
-    if (!row.media?.src) row.media = { src: added[0].src }
+    if (!row.media?.src && added.length) row.media = { src: added[0].src }
     return draft
   })
-  return { state: next, added, art: artState(ctx) }
+  const thread = variantOf(saved.items.find(row => row.id === body.id)).thread
+  return {
+    state: saved,
+    added,
+    thread,
+    art: artState(ctx),
+    ...(added.length ? {} : { error: String(failure?.message ?? tr('这次一张都没画出来')).slice(0, 300) }),
+  }
 }
 
 /**

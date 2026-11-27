@@ -16,6 +16,7 @@ import { computeInsights, exportSkill, proposeRules } from './learn.js'
 import { createMonidRunner, fetchAccount, importPosts, monidStatus, postsToMaterial, resolveAccount, saveCovers } from './monid.js'
 import { applyOps, newId } from './ops.js'
 import { applyRevision, Producer } from './produce.js'
+import { resolveRefs } from './refs.js'
 import { publicSettings, Settings, imageReady } from './settings.js'
 import { normalizeStyle, referenceExcerpt, stylePrompts } from './style.js'
 import { dshHome, Store } from './store.js'
@@ -104,20 +105,35 @@ function outageNotice(ctx, wasDown, fallback) {
 
 async function chatTurn(ctx, store, desk, body) {
   const message = String(body.message || '').trim()
-  if (!message) throw Object.assign(new Error(tr('消息为空')), { status: 400 })
   const focusId = typeof body.focusId === 'string' ? body.focusId : undefined
   const state = await store.read()
   const snapshot = JSON.parse(JSON.stringify(state))
+  // 图库里选中的图：只认插件自己文件目录里的图片，最多 4 张
+  const attached = await resolveRefs(ctx, body.refs)
+  const refs = attached.refs
+  if (!message && !refs.length) throw Object.assign(new Error(tr('消息为空')), { status: 400 })
   let plan
   let engine = 'local'
   let notice = null
   const wasDown = modelStatus.ok === false
   try {
     const history = snapshot.chat.filter(row => (row.itemId ?? null) === (focusId ?? null))
-    const { system, user } = chatPrompts(snapshot, message, { focusId, history })
+    const { system, user } = chatPrompts(snapshot, message || tr('看看这几张图'), { focusId, history, refs })
     const editing = snapshot.items.find(row => row.id === focusId)?.production?.status === 'done'
-    const { text, model } = await callModel(ctx, { system, user, maxTokens: editing ? 8000 : 2000, light: true, signal: AbortSignal.timeout(editing ? 240_000 : 90_000) })
+    const { text, model, sawImages } = await callModel(ctx, {
+      system,
+      user,
+      images: attached.blocks,
+      maxTokens: editing ? 8000 : 2000,
+      light: true,
+      signal: AbortSignal.timeout(editing ? 240_000 : 90_000),
+    })
     engine = model
+    if (refs.length && (!attached.blocks.length || !sawImages)) {
+      notice = attached.blocks.length
+        ? tr('当前模型不能看图，这 {n} 张参考图只按文字说明处理了。', { n: refs.length })
+        : tr('这 {n} 张参考图没能交给模型，只按文字说明了它们的出处。', { n: refs.length })
+    }
     try {
       plan = extractJson(text)
       if (typeof plan.reply !== 'string') plan.reply = tr('处理好了。')
@@ -127,12 +143,12 @@ async function chatTurn(ctx, store, desk, body) {
     }
   } catch {
     notice = outageNotice(ctx, wasDown, tr('先用本地规则处理'))
-    plan = localIntent(snapshot, message, { focusId })
+    plan = localIntent(snapshot, message || tr('看看这几张图'), { focusId })
   }
   const settings = await desk.settings.read()
   const canDraw = desk.producer.ready(settings)
   // 只把真正改了数据的那一步放进撤销；问一句话不占撤销位
-  const changed = await store.mutate(tr('对话：{text}', { text: message.slice(0, 18) }), (draft) => {
+  const changed = await store.mutate(tr('对话：{text}', { text: (message || tr('参考图')).slice(0, 18) }), (draft) => {
     const target = focusId ? draft.items.find(row => row.id === focusId) : null
     const production = target?.production?.status === 'done' ? target.production : null
     // 本地规则只会改灵感标题；有成稿时要改的是成稿标题
@@ -159,7 +175,14 @@ async function chatTurn(ctx, store, desk, body) {
     const actions = (Array.isArray(plan.actions) ? plan.actions : [])
       .filter(a => a && ['produce', 'open', 'nav'].includes(a.type))
       .filter(a => !(a.type === 'produce' && (done && a.id === focusId || draft.items.find(row => row.id === a.id)?.production?.status === 'done')))
-    draft.chat.push({ id: newId('c'), at, role: 'user', text: message, itemId })
+    draft.chat.push({
+      id: newId('c'),
+      at,
+      role: 'user',
+      text: message,
+      ...(refs.length ? { refs: refs.map(row => ({ src: row.src, label: row.label })) } : {}),
+      itemId,
+    })
     const answer = { id: newId('c'), at, role: 'assistant', text: plan.reply, receipts, errors, engine, notice, undoable: receipts.length > 0, itemId }
     draft.chat.push(answer)
     draft.chat = draft.chat.slice(-300)

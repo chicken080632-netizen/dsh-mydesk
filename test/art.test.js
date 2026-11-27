@@ -279,7 +279,7 @@ test('galleryMake：选中的那张当参考时走改图，交出去的是插件
   }
 })
 
-test('galleryMake：单张失败只交成功的那些，全失败才报错', async () => {
+test('galleryMake：单张失败只交成功的那些，全失败也把话留在对话里', async () => {
   const box = await fixture()
   try {
     let n = 0
@@ -296,22 +296,67 @@ test('galleryMake：单张失败只交成功的那些，全失败才报错', asy
     })
     const data = await galleryMake(ctxOf(tools), box.store, { id: 'board', prompt: '画两张', count: 2 })
     assert.equal(data.added.length, 1)
+    // 一问一答都记进 thread
+    assert.equal(data.thread.length, 2)
+    assert.equal(data.thread[0].role, 'user')
+    assert.deepEqual(data.thread[1].added, [data.added[0].id])
 
     const doomed = fakeTools({ edit: false, draw: true, execute: async () => fail('全挂了') })
-    await assert.rejects(() => galleryMake(ctxOf(doomed), box.store, { id: 'board', prompt: '再画', count: 2 }), /全挂了/)
+    const sad = await galleryMake(ctxOf(doomed), box.store, { id: 'board', prompt: '再画', count: 2 })
+    assert.equal(sad.added.length, 0)
+    assert.match(sad.error, /全挂了/)
+    const last = sad.thread[sad.thread.length - 1]
+    assert.equal(last.role, 'assistant')
+    assert.match(last.error, /全挂了/)
   } finally {
     await box.done()
   }
 })
 
-test('galleryMake：只接图库卡片，空提示词、找不到、没有工具都拒绝', async () => {
+test('galleryMake：只接图库卡片，空提示词、找不到都拒绝；没有工具也只记一条错误不回滚', async () => {
   const box = await fixture()
   try {
     const tools = fakeTools({ edit: false, draw: true, execute: async () => ok({}) })
     await assert.rejects(() => galleryMake(ctxOf(tools), box.store, { id: 'picture', prompt: '画' }), /只有图库/)
     await assert.rejects(() => galleryMake(ctxOf(tools), box.store, { id: 'board', prompt: '   ' }), /先写一句/)
     await assert.rejects(() => galleryMake(ctxOf(tools), box.store, { id: 'nope', prompt: '画' }), /找不到/)
-    await assert.rejects(() => galleryMake(ctxOf(undefined), box.store, { id: 'board', prompt: '画' }), /没有可用的图像工具/)
+
+    const bare = await galleryMake(ctxOf(undefined), box.store, { id: 'board', prompt: '画' })
+    assert.equal(bare.added.length, 0)
+    assert.match(bare.error, /没有可用的图像工具/)
+    assert.equal(bare.thread[bare.thread.length - 1].role, 'assistant')
+  } finally {
+    await box.done()
+  }
+})
+
+test('galleryMake：消息里带的参考图优先当改图的底图', async () => {
+  const box = await fixture()
+  try {
+    const seen = []
+    const tools = fakeTools({
+      edit: true,
+      draw: true,
+      execute: async (call) => {
+        seen.push({ name: call.name, args: call.arguments })
+        if (call.name === 'edit_image') return ok({ output: `data:image/png;base64,${PNG.toString('base64')}` })
+        const out = join(box.files, `drawn-${seen.length}.png`)
+        await writeFile(out, PNG)
+        return ok({ paths: [out] })
+      },
+    })
+    const data = await galleryMake(ctxOf(tools), box.store, {
+      id: 'board',
+      text: '接着这张改',
+      count: 1,
+      refs: [{ src: 'mydesk/files/base.png', label: '第 1 张' }, 'https://example.com/x.png', 'mydesk/files/base.png'],
+    })
+    assert.equal(seen[0].name, 'edit_image')
+    assert.match(JSON.parse(seen[0].args).source_path, /files[\\/]base\.png$/)
+    // 非法的来源被丢掉、重复的只留一份
+    assert.equal(data.thread[0].refs.length, 1)
+    assert.equal(data.thread[0].refs[0].label, '第 1 张')
+    assert.equal(data.added.length, 1)
   } finally {
     await box.done()
   }

@@ -7,7 +7,7 @@ const BASE = 'mydesk/'
 
 let snapshot = {
   state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null,
-  view: 'home', mode: 'scatter', focusId: null, sheetOrigin: null, inlineId: null, dockOpen: true, studioDock: false, chatQuote: null, query: '', kindFilter: 'all', related: null,
+  view: 'home', mode: 'scatter', focusId: null, sheetOrigin: null, inlineId: null, dockOpen: true, studioDock: false, chatQuote: null, chatRefs: [], query: '', kindFilter: 'all', related: null,
   live: {}, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
 }
 const listeners = new Set()
@@ -139,14 +139,14 @@ export async function remixArt(id, { prompt, ratio, source } = {}) {
   return data
 }
 
-/** 图库里连画几张，一次调用可能一两分钟。 */
-export async function galleryMake(id, { prompt, ratio, count, source } = {}) {
+/** 图库生图对话：发一句话（可带最多 4 张参考图），一次调用可能一两分钟。 */
+export async function galleryMake(id, { text, prompt, ratio, count, refs } = {}) {
   const data = await request('art/gallery', {
     id,
-    prompt,
+    text: text ?? prompt,
     ...(ratio ? { ratio } : {}),
     ...(count ? { count } : {}),
-    ...(source ? { source } : {}),
+    ...(refs?.length ? { refs } : {}),
   })
   setDesk({ state: data.state })
   return data
@@ -259,16 +259,22 @@ function runActions(actions) {
 }
 
 export async function sendChat(text) {
-  const { chatQuote: quote, focusId } = snapshot
+  const { chatQuote: quote, focusId, chatRefs } = snapshot
+  const refs = Array.isArray(chatRefs) ? chatRefs.slice(0, 4) : []
+  const words = String(text ?? '').trim() || (refs.length ? t('看看这几张图') : '')
   // 选中的段落或某一镜，随消息一起交给模型
-  const message = quote ? (quote.text ? t('关于{label}「{quote}」：{text}', { label: quote.label, quote: quote.text, text }) : t('关于{label}：{text}', { label: quote.label, text })) : text
+  const message = quote ? (quote.text ? t('关于{label}「{quote}」：{text}', { label: quote.label, quote: quote.text, text: words }) : t('关于{label}：{text}', { label: quote.label, text: words })) : words
   setDesk(s => ({
     thinking: true,
     chatQuote: null,
-    state: { ...s.state, chat: [...s.state.chat, { id: `tmp_${Date.now()}`, role: 'user', text: message, itemId: focusId ?? undefined }] },
+    chatRefs: [],
+    state: {
+      ...s.state,
+      chat: [...s.state.chat, { id: `tmp_${Date.now()}`, role: 'user', text: message, ...(refs.length ? { refs: refs.map(row => ({ src: row.src, label: row.label })) } : {}), itemId: focusId ?? undefined }],
+    },
   }))
   try {
-    const data = await request('chat', { message, focusId: focusId ?? undefined })
+    const data = await request('chat', { message, focusId: focusId ?? undefined, ...(refs.length ? { refs: refs.map(row => row.src) } : {}) })
     setDesk({ state: data.state, canUndo: true, modelOk: data.modelOk, modelError: data.modelError })
     runActions(data.actions || [])
   } catch (err) {

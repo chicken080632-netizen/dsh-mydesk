@@ -1,15 +1,16 @@
-// 图库：一边管图，一边出图。左边是已经画出来的所有图，右边是生图面板。
+// 图库：左边管图，右边出图。右栏是一条「生图对话」——说一句就画，画好的落回左边。
 import React from 'react'
 import { addGalleryFiles, closeItem, dispatchOps, dropVariant, galleryMake, saveBoardLayout, toast, uploadFile, useDesk, useVariant } from './desk.js'
 import { GalleryBoard } from './board.jsx'
 import { t } from './i18n.js'
-import { fmtWhen } from './util.js'
 import { Icon, IconButton, Segmented } from './ui.jsx'
 
 const RATIOS = [{ value: '', label: '默认' }, { value: '1:1', label: '1:1' }, { value: '3:4', label: '3:4' }, { value: '4:3', label: '4:3' }, { value: '9:16', label: '9:16' }, { value: '16:9', label: '16:9' }]
 const COUNTS = [1, 2, 4]
 // 一次拖进来最多收这些张，免得手滑拖了整个相册把页面拖住
 const DROP_MAX = 24
+// 一条消息最多带几张参考图，和后端 art.js 的上限保持一致
+const REF_MAX = 4
 const IDEA_CHIPS = [
   '同一套配色的封面',
   '海报感的大字标题',
@@ -19,15 +20,31 @@ const IDEA_CHIPS = [
   '换个光线和色调',
 ]
 
-function Tile({ shot, index, active, busy, onPick, onView, onCover, onDrop }) {
+function Thumb({ src, label, onOpen, onDrop }) {
+  return (
+    <span className="myd-gal-link">
+      <button type="button" className="myd-gal-link-shot" onClick={onOpen} title={label || t('看大图')}>
+        <img src={src} alt="" loading="lazy" draggable={false} referrerPolicy="no-referrer" />
+      </button>
+      {onDrop ? (
+        <button type="button" className="myd-gal-link-drop" aria-label={t('移除这张参考图')} onClick={onDrop}>
+          <Icon name="close" size={9} stroke={2.2} />
+        </button>
+      ) : null}
+    </span>
+  )
+}
+
+function Tile({ shot, index, active, busy, onPick, onView, onCover, onChat, onDrop }) {
   return (
     <figure className={`myd-gal-tile${active ? ' is-on' : ''}`} data-index={index}>
-      <button type="button" className="myd-gal-shot" disabled={busy} onClick={() => onPick(shot)} aria-label={t('选中第 {n} 张当参考', { n: index + 1 })}>
+      <button type="button" className="myd-gal-shot" disabled={busy} onClick={() => onPick(shot)} aria-label={t('点一下加进参考，最多 4 张')}>
         <img src={shot.src} alt="" loading="lazy" draggable={false} referrerPolicy="no-referrer" />
         {active ? <span className="myd-gal-picked"><Icon name="check" size={12} stroke={2.4} />{t('参考图')}</span> : null}
       </button>
       <div className="myd-gal-acts">
         <button type="button" className="myd-gal-act" disabled={busy} onClick={() => onView(shot)} title={t('看大图')}><Icon name="expand" size={13} /></button>
+        <button type="button" className="myd-gal-act" disabled={busy} onClick={() => onChat(shot)} title={t('放进生图对话')}><Icon name="chat" size={13} /></button>
         <button type="button" className="myd-gal-act" disabled={busy} onClick={() => onCover(shot)} title={t('设为封面')}><Icon name="image" size={13} /></button>
         <button type="button" className="myd-gal-act is-quiet" disabled={busy} onClick={() => onDrop(shot)} title={t('删掉这张')}><Icon name="trash" size={13} /></button>
       </div>
@@ -40,11 +57,12 @@ export function GalleryStudio({ item }) {
   const settings = useDesk(s => s.settings)
   const capabilities = settings?.art
   const variants = Array.isArray(item.art?.variants) ? item.art.variants : []
-  const latest = variants.length ? variants[variants.length - 1] : null
+  const thread = Array.isArray(item.art?.thread) ? item.art.thread : []
   const [prompt, setPrompt] = React.useState(item.art?.prompt ?? '')
   const [ratio, setRatio] = React.useState('')
   const [count, setCount] = React.useState(1)
-  const [picked, setPicked] = React.useState(null)
+  // 已挂进输入框、等这条消息一起发出去的参考图（{ src, label }）
+  const [attached, setAttached] = React.useState([])
   const [busy, setBusy] = React.useState(false)
   const [waiting, setWaiting] = React.useState(0)
   const [shown, setShown] = React.useState(null)
@@ -53,13 +71,20 @@ export function GalleryStudio({ item }) {
   const [mode, setMode] = React.useState(() => (item.art?.board?.mode === 'board' ? 'board' : 'grid'))
   const startedAt = React.useRef(0)
   const input = React.useRef(null)
+  const scroll = React.useRef(null)
 
   React.useEffect(() => {
     setPrompt(item.art?.prompt ?? '')
-    setPicked(null)
+    setAttached([])
     setShown(null)
     setMode(item.art?.board?.mode === 'board' ? 'board' : 'grid')
   }, [item.id])
+
+  // 新消息进来就滚到底部，像聊天一样
+  React.useEffect(() => {
+    const box = scroll.current
+    if (box) box.scrollTop = box.scrollHeight
+  }, [thread.length, busy])
 
   // 预览模式存在卡片自己的布局里（和位置、缩放一起），换卡片或刷新都还记着
   const switchMode = (next) => {
@@ -110,7 +135,6 @@ export function GalleryStudio({ item }) {
         return
       }
       const data = await addGalleryFiles(item.id, sources)
-      setPicked(null)
       toast(t('收了 {n} 张图', { n: data.added?.length ?? sources.length }))
     } catch (error) {
       toast(error.message, { error: true })
@@ -137,12 +161,39 @@ export function GalleryStudio({ item }) {
   const actionable = Boolean(capabilities?.ready)
   // host 半片还是旧版时 settings 里没有 art 这个键：说清楚是要重启 DSH，别让人干等
   const staleHost = Boolean(settings) && !('art' in settings)
-  const reference = picked ? variants.find(row => row.id === picked) ?? null : null
   const indexOf = shot => variants.findIndex(row => row.id === shot.id) + 1
   const shots = [...variants].reverse()
 
+  // 把图挂进输入框当参考：去重、最多 4 张，顺带把「第几张」标出来
+  const attach = (rows) => {
+    const list = (Array.isArray(rows) ? rows : [rows]).filter(row => row?.src)
+    if (!list.length) return
+    setAttached((current) => {
+      const next = [...current]
+      for (const row of list) {
+        if (next.length >= REF_MAX) break
+        if (next.some(ref => ref.src === row.src)) continue
+        const index = typeof row.id === 'string' ? variants.findIndex(entry => entry.id === row.id) + 1 : 0
+        const label = index >= 0 && index > 0 ? t('第 {n} 张', { n: index }) : (row.label || '')
+        next.push({ src: row.src, label })
+      }
+      return next
+    })
+    input.current?.focus()
+  }
+
+  const detach = (src) => setAttached(current => current.filter(ref => ref.src !== src))
+
+  const toggle = (shot) => {
+    if (attached.some(ref => ref.src === shot.src)) {
+      detach(shot.src)
+      return
+    }
+    attach([shot])
+  }
+
   const run = async () => {
-    const text = prompt.trim()
+    const text = prompt.trim() || (attached.length ? t('照着这几张画') : '')
     if (!text) {
       toast(t('先写一句想要什么画面'), { error: true })
       return
@@ -151,17 +202,14 @@ export function GalleryStudio({ item }) {
     setBusy(true)
     try {
       const data = await galleryMake(item.id, {
-        prompt: text,
+        text,
         count,
         ...(ratio ? { ratio } : {}),
-        ...(picked ? { source: picked } : {}),
+        ...(attached.length ? { refs: attached.map(ref => ({ src: ref.src, label: ref.label })) } : {}),
       })
-      const first = data.added?.[0]
-      if (first) {
-        setPicked(first.id)
-        setShown(first.src)
-      }
-      if (data.added?.length && count > data.added.length) toast(t('只画出来 {n} 张，其余几张失败了', { n: data.added.length }), { error: true })
+      setPrompt('')
+      setAttached([])
+      if (data.error) toast(data.error, { error: true })
     } catch (error) {
       toast(error.message, { error: true })
     } finally {
@@ -181,7 +229,6 @@ export function GalleryStudio({ item }) {
   const remove = async (shot) => {
     try {
       await dropVariant(item.id, shot.id)
-      if (picked === shot.id) setPicked(null)
       if (shown === shot.src) setShown(null)
       toast(t('删掉了一张'))
     } catch (error) {
@@ -199,12 +246,13 @@ export function GalleryStudio({ item }) {
     }
   }
 
-  const pick = (shot) => {
-    const next = picked === shot.id ? null : shot.id
-    setPicked(next)
-    setPrompt(text => (next && !text.trim() && shot.prompt ? shot.prompt : text))
-    if (next) input.current?.focus()
-  }
+  const capability = staleHost
+    ? t('这个工作台的后端还是旧版（没有生图接口），重启 DSH 后再来。')
+    : !capabilities
+      ? t('正在检查可用的图像工具…')
+      : !actionable
+        ? t('还没有可用的图像工具，先去设置里接入生图模型。')
+        : t('说一句就画；带参考图时会接着它们改。一次最多 4 张。')
 
   return (
     <div
@@ -230,12 +278,12 @@ export function GalleryStudio({ item }) {
             { value: 'grid', label: t('缩略图'), title: t('缩略图：一张张方图排下去') },
             { value: 'board', label: t('铺开'), title: t('铺开：按原比例摆在一块画布上') },
           ]} />
-          <span className="myd-gal-hint">{mode === 'grid' && shots.length ? t('点一张选中，作为下一轮的参考') : ''}</span>
+          <span className="myd-gal-hint">{mode === 'grid' && shots.length ? t('点一张就加进右边当参考') : ''}</span>
           <IconButton icon="trash" label={t('删除卡片')} onClick={() => removeCard()} />
         </header>
 
         {mode === 'board' ? (
-          <GalleryBoard item={item} variants={variants} mode={mode} />
+          <GalleryBoard item={item} variants={variants} mode={mode} onSendToChat={attach} />
         ) : (
         <div className="myd-gal-scroll">
           {shots.length || busy ? (
@@ -246,14 +294,14 @@ export function GalleryStudio({ item }) {
                 </div>
               )) : null}
               {shots.map(shot => (
-                <Tile key={shot.id} shot={shot} index={indexOf(shot)} active={picked === shot.id} busy={busy}
-                  onPick={pick} onView={row => setShown(row.src)} onCover={makeCover} onDrop={remove} />
+                <Tile key={shot.id} shot={shot} index={indexOf(shot)} active={attached.some(ref => ref.src === shot.src)} busy={busy}
+                  onPick={toggle} onView={row => setShown(row.src)} onCover={makeCover} onChat={row => attach([row])} onDrop={remove} />
               ))}
             </div>
           ) : (
             <div className="myd-gal-empty">
               <Icon name="image" size={22} />
-              <p>{t('这个图库还是空的：在右边写一句想要什么，画出来的图都会存在这里。')}</p>
+              <p>{t('这个图库还是空的：在右边说一句想要什么，画出来的图都会存在这里。')}</p>
               <p className="myd-gal-empty-hint">{t('也可以把本地图片拖进来，或者直接 Ctrl+V 粘贴。')}</p>
               <button type="button" className="myd-art-chip" onClick={() => input.current?.focus()}>{t('开始画第一张')}</button>
             </div>
@@ -263,73 +311,120 @@ export function GalleryStudio({ item }) {
       </section>
 
       <aside className="myd-gal-panel">
-        <label className="myd-art-label" htmlFor="myd-gal-prompt">{t('想让 AI 画什么')}</label>
-        <textarea id="myd-gal-prompt" ref={input} className="myd-art-input" rows={4} value={prompt} disabled={busy}
-          placeholder={t('比如：一组留白很大的封面，深色背景，中间一行大字，冷静但有一点暖光')}
-          onChange={event => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault()
-              if (!busy) run()
-            }
-          }} />
-
-        <div className="myd-gal-ref">
-          <Icon name={reference ? 'check' : 'image'} size={12} />
-          <span>{reference ? t('参考第 {n} 张', { n: indexOf(reference) }) : t('不用参考图，从零画')}</span>
+        <header className="myd-gal-chat-head">
+          <Icon name="spark" size={14} />
+          <h3>{t('生图对话')}</h3>
           <span className="myd-art-gap" />
-          {reference ? <button type="button" className="myd-art-chip" onClick={() => setPicked(null)}>{t('取消参考')}</button> : null}
-        </div>
+          <span className={`myd-gal-cap${actionable ? ' is-on' : ''}`}>
+            {staleHost ? t('后端旧版') : !capabilities ? t('检查中') : actionable ? t('可以画') : t('不可用')}
+          </span>
+        </header>
 
-        <div className="myd-art-chips">
-          {IDEA_CHIPS.map(chip => (
-            <button type="button" key={chip} className="myd-art-chip" disabled={busy}
-              onClick={() => setPrompt(text => (text.trim() ? `${text.trim()}，${t(chip)}` : t(chip)))}>
-              {t(chip)}
-            </button>
+        <div className="myd-gal-thread" ref={scroll}>
+          {!thread.length && !busy ? (
+            <div className="myd-gal-thread-empty">
+              <p>{t('在这里说一句想要什么，画出来的图会出现在左边。')}</p>
+              <p className="myd-gal-thread-tip">{t('左边点一张就带进来当参考，最多 4 张。')}</p>
+            </div>
+          ) : null}
+
+          {thread.map(entry => (
+            <div key={entry.id} className={`myd-gal-bubble is-${entry.role}`}>
+              {entry.refs?.length ? (
+                <div className="myd-gal-bubble-refs">
+                  {entry.refs.map((ref, index) => (
+                    <Thumb key={`${ref.src}-${index}`} src={ref.src} label={ref.label} onOpen={() => setShown(ref.src)} />
+                  ))}
+                </div>
+              ) : null}
+              {entry.text ? <p className="myd-gal-bubble-text">{entry.text}</p> : null}
+              {entry.error ? <p className="myd-gal-bubble-error">{entry.error}</p> : null}
+              {entry.added?.length ? (
+                <div className="myd-gal-bubble-shots">
+                  {entry.added.map((id) => {
+                    const shot = variants.find(row => row.id === id)
+                    if (!shot) return null
+                    return <Thumb key={id} src={shot.src} label={indexOf(shot) > 0 ? t('第 {n} 张', { n: indexOf(shot) }) : ''} onOpen={() => setShown(shot.src)} />
+                  })}
+                </div>
+              ) : null}
+            </div>
           ))}
+
+          {busy ? (
+            <div className="myd-gal-bubble is-assistant is-wait">
+              <span className="myd-shimmer">{t('正在画…')}</span>
+              {waiting ? <em>{t('{n} 秒', { n: waiting })}</em> : null}
+            </div>
+          ) : null}
         </div>
 
-        <div className="myd-art-field">
-          <span className="myd-art-label">{t('画幅')}</span>
-          <div className="myd-art-ratios">
-            {RATIOS.map(option => (
-              <button type="button" key={option.value || 'auto'} className={ratio === option.value ? 'is-on' : ''} disabled={busy}
-                onClick={() => setRatio(option.value)}>
-                {t(option.label)}
+        <div className="myd-gal-composer">
+          {attached.length ? (
+            <div className="myd-gal-attached">
+              {attached.map((ref, index) => (
+                <span className="myd-gal-attached-chip" key={ref.src}>
+                  <button type="button" className="myd-gal-attached-shot" onClick={() => setShown(ref.src)} title={t('看大图')}>
+                    <img src={ref.src} alt="" draggable={false} referrerPolicy="no-referrer" />
+                  </button>
+                  <span className="myd-gal-attached-label">{ref.label || t('参考 {n}', { n: index + 1 })}</span>
+                  <button type="button" className="myd-gal-attached-drop" aria-label={t('移除这张参考图')} onClick={() => detach(ref.src)}>
+                    <Icon name="close" size={10} stroke={2.2} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="myd-gal-box">
+            <textarea id="myd-gal-prompt" ref={input} className="myd-gal-input" rows={3} value={prompt} disabled={busy}
+              placeholder={attached.length ? t('想怎么改这几张？比如：换成夜景，人物不变') : t('比如：一组留白很大的封面，深色背景，中间一行大字，冷静但有一点暖光')}
+              onChange={event => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault()
+                  if (!busy) run()
+                }
+              }} />
+
+            <div className="myd-gal-row">
+              <span className="myd-gal-row-label">{t('画幅')}</span>
+              <div className="myd-gal-pills" role="group" aria-label={t('画幅')}>
+                {RATIOS.map(option => (
+                  <button type="button" key={option.value || 'auto'} className={ratio === option.value ? 'is-on' : ''} disabled={busy}
+                    onClick={() => setRatio(option.value)}>
+                    {t(option.label)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="myd-gal-row">
+              <span className="myd-gal-row-label">{t('张数')}</span>
+              <div className="myd-gal-pills is-short" role="group" aria-label={t('这次画几张')}>
+                {COUNTS.map(value => (
+                  <button type="button" key={value} className={count === value ? 'is-on' : ''} disabled={busy} onClick={() => setCount(value)}>
+                    {value}
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="myd-gal-send" disabled={busy || !actionable} onClick={run} title={t('发出去')} aria-label={t('发出去')}>
+                {busy ? <span className="myd-gal-send-wait" /> : <Icon name="send" size={14} />}
+              </button>
+            </div>
+          </div>
+
+          <div className="myd-gal-chips">
+            {IDEA_CHIPS.map(chip => (
+              <button type="button" key={chip} className="myd-gal-chip" disabled={busy}
+                onClick={() => setPrompt(current => (current.trim() ? `${current.trim()}，${t(chip)}` : t(chip)))}>
+                {t(chip)}
               </button>
             ))}
           </div>
+
+          <p className={`myd-gal-note${actionable ? '' : ' is-off'}`}>{capability}</p>
         </div>
-
-        <div className="myd-art-field">
-          <span className="myd-art-label">{t('这次画几张')}</span>
-          <div className="myd-art-ratios">
-            {COUNTS.map(value => (
-              <button type="button" key={value} className={count === value ? 'is-on' : ''} disabled={busy} onClick={() => setCount(value)}>
-                {t('{n} 张', { n: value })}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <button type="button" className="myd-art-go" disabled={busy || !actionable} onClick={run}>
-          {busy ? <><span className="myd-shimmer">{t('正在画…')}</span>{waiting ? <em>{t('{n} 秒', { n: waiting })}</em> : null}</> : <><Icon name="spark" size={15} />{variants.length ? t('再画几张') : t('画出来')}</>}
-        </button>
-
-        <p className="myd-art-note">
-          {staleHost
-            ? t('这个工作台的后端还是旧版（没有生图接口），重启 DSH 后再来。')
-            : !capabilities
-              ? t('正在检查可用的图像工具…')
-              : !actionable
-                ? t('还没有可用的图像工具，先去设置里接入生图模型。')
-                : reference
-                  ? t('会拿选中的那张当参考，接着它画；一次最多 4 张。')
-                  : t('不用参考图，按描述从零画；画好的图都在左边，可以挑一张当封面。')}
-        </p>
-        <p className="myd-gal-hint-line">{t('本地图片可以直接拖到左边，或 Ctrl+V 粘贴。')}</p>
-        {latest ? <p className="myd-gal-stamp">{t('最近一次：{when}', { when: fmtWhen(latest.createdAt) })}</p> : null}
       </aside>
 
       {dragging > 0 || receiving ? (

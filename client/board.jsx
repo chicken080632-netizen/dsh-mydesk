@@ -29,9 +29,9 @@ export function boardOf(item) {
 
 /**
  * 铺开的画布。位置、缩放、组合都会防抖存回 host（`art/board`），下次打开还是这个样子。
- * @param {{item: object, variants: object[], mode: string}} props - 卡片、这一版图、当前预览模式。
+ * @param {{item: object, variants: object[], mode: string, onSendToChat?: (rows: object[]) => void}} props - 卡片、这一版图、当前预览模式、把选中的图送到对话框。
  */
-export function GalleryBoard({ item, variants, mode }) {
+export function GalleryBoard({ item, variants, mode, onSendToChat = null }) {
   const [board, setBoard] = React.useState(() => boardOf(item))
   const [dims, setDims] = React.useState({})
   const [selected, setSelected] = React.useState(() => new Set())
@@ -642,6 +642,11 @@ export function GalleryBoard({ item, variants, mode }) {
           </div>
         ) : null}
         {picked.length ? <button type="button" className="myd-bd-btn" onClick={ungroup}>{t('取消组合')}</button> : null}
+        {picked.length && onSendToChat ? (
+          <button type="button" className="myd-bd-btn is-primary" onClick={() => onSendToChat(picked)}>
+            {t('放进生图对话')}
+          </button>
+        ) : null}
         <div className="myd-bd-tools">
           <button type="button" className="myd-bd-icon" onClick={undo} disabled={!hist.undo}
             title={t('撤销（Ctrl+Z）')} aria-label={t('撤销')}><Icon name="undo" size={14} /></button>

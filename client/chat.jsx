@@ -11,6 +11,9 @@ const SUGGESTIONS = [
   '把今天最好的灵感一键成稿',
 ]
 
+// 没有待发参考图时用同一个空数组：useDesk 的选择器每次返回新数组会触发无限重渲染
+const NO_REFS = []
+
 function Receipt({ receipt }) {
   const clickable = receipt.kind === 'item' && receipt.target
   const Tag = clickable ? 'button' : 'div'
@@ -23,7 +26,20 @@ function Receipt({ receipt }) {
 }
 
 function Message({ message, canUndoThis }) {
-  if (message.role === 'user') return <div className="myd-msg is-user">{message.text}</div>
+  if (message.role === 'user') {
+    return (
+      <div className="myd-msg is-user">
+        {message.refs?.length ? (
+          <div className="myd-msg-refs">
+            {message.refs.map((row, index) => (
+              <img key={`${row.src}-${index}`} src={row.src} alt={row.label || t('参考图')} title={row.label || t('参考图')} loading="lazy" />
+            ))}
+          </div>
+        ) : null}
+        {message.text ? <span>{message.text}</span> : null}
+      </div>
+    )
+  }
   return (
     <div className="myd-msg is-bot">
       <p>{message.text}</p>
@@ -44,6 +60,7 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
   const chat = React.useMemo(() => all.filter(m => (m.itemId ?? null) === (itemId ?? null)), [all, itemId])
   const thinking = useDesk(s => s.thinking)
   const quote = useDesk(s => s.chatQuote)
+  const refs = useDesk(s => s.chatRefs) ?? NO_REFS
   const [text, setText] = React.useState('')
   const scroller = React.useRef(null)
   const input = React.useRef(null)
@@ -58,15 +75,16 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`
   }, [text])
   React.useEffect(() => {
-    if (quote) input.current?.focus()
-  }, [quote])
+    if (quote || refs.length) input.current?.focus()
+  }, [quote, refs.length])
 
   const send = (value) => {
     const message = (value ?? text).trim()
-    if (!message || thinking || disabled) return
+    if ((!message && !refs.length) || thinking || disabled) return
     setText('')
     sendChat(message)
   }
+  const dropRef = (index) => setDesk(s => ({ chatRefs: (s.chatRefs ?? []).filter((row, at) => at !== index) }))
   const lastBot = [...chat].reverse().find(m => m.role === 'assistant')
 
   return (
@@ -88,6 +106,17 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
         </div>
       ) : null}
       <form className="myd-composer" onSubmit={(event) => { event.preventDefault(); send() }}>
+        {refs.length ? (
+          <div className="myd-composer-refs">
+            <span className="myd-composer-refs-label">{t('参考图 {n} 张', { n: refs.length })}</span>
+            {refs.map((row, index) => (
+              <span className="myd-ref-chip" key={`${row.src}-${index}`}>
+                <img src={row.src} alt={row.label || t('参考图')} title={row.label || t('参考图')} loading="lazy" />
+                <button type="button" aria-label={t('移除这张参考图')} onClick={() => dropRef(index)}><Icon name="close" size={10} /></button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         {quote ? (
           <div className="myd-composer-ctx">
             <Icon name="target" size={12} />
@@ -110,7 +139,7 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
             }
           }}
         />
-        <button type="submit" className="myd-send" aria-label={t('发送')} disabled={!text.trim() || thinking || disabled}><Icon name="send" size={15} /></button>
+        <button type="submit" className="myd-send" aria-label={t('发送')} disabled={(!text.trim() && !refs.length) || thinking || disabled}><Icon name="send" size={15} /></button>
       </form>
     </div>
   )

@@ -44,6 +44,8 @@
 :where(.myd-root) :is(h1, h2, h3, p, dl, dd, ul, ol, blockquote) { margin: 0; padding: 0; }
 :where(.myd-root) :is(ul, ol) { list-style: none; }
 .myd-root :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 文本域本身就是编辑态，聚焦由所在容器描边表示；这里统一去掉浏览器那种方框（.myd-root :focus-visible 特异性更高，必须显式覆盖） */
+.myd-root textarea:focus-visible, .myd-root textarea:focus { outline: none; }
 :where(.myd-root) :is(input, textarea, select) { font: inherit; color: inherit; }
 /* 下拉框弹出的选项列表由系统绘制，不认页面颜色：跟着 DSH 的深色主题切换配色方案，再给选项本身上色兜底 */
 body[data-ds-dark-theme] .myd-root { color-scheme: dark; }
@@ -994,10 +996,7 @@ button.myd-receipt:hover { transform: translateX(2px); }
 .myd-gal-tile.is-wait .myd-gal-shot { display: flex; align-items: center; justify-content: center; color: var(--ink4); font-size: 12px; }
 .myd-gal-empty { height: 100%; min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--ink4); text-align: center; }
 .myd-gal-empty p { margin: 0; max-width: 320px; font-size: 13px; line-height: 22px; }
-.myd-gal-panel { flex: none; width: 336px; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 18px; border-left: .5px solid var(--line); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.myd-gal-ref { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; background: color-mix(in srgb, var(--ink) 4%, transparent); font-size: 11.5px; color: var(--ink3); }
-.myd-gal-ref .myd-art-chip { padding: 2px 7px; font-size: 11px; }
-.myd-gal-stamp { margin: 0; font-size: 11px; color: var(--ink4); }
+.myd-gal-panel { flex: none; width: 336px; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 14px; border-left: .5px solid var(--line); background: color-mix(in srgb, var(--ink) 2.5%, transparent); overflow: hidden; }
 .myd-art-go em { font-style: normal; opacity: .68; font-size: 12px; }
 .myd-gal-view { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / .74); backdrop-filter: blur(6px); }
 .myd-gal-view img { max-width: calc(100% - 140px); max-height: calc(100% - 150px); border-radius: 12px; box-shadow: 0 30px 70px -20px rgb(0 0 0 / .6); }
@@ -1021,7 +1020,6 @@ button.myd-receipt:hover { transform: translateX(2px); }
 .myd-gal-drop { position: absolute; inset: 8px; z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1.5px dashed color-mix(in srgb, var(--primary) 58%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--canvas) 76%, transparent); backdrop-filter: blur(2px); color: var(--ink2); pointer-events: none; }
 .myd-gal-drop p { margin: 0; font-size: 13.5px; font-weight: 600; }
 .myd-gal-drop small { font-size: 11.5px; color: var(--ink4); }
-.myd-gal-hint-line { margin: 2px 0 0; font-size: 11px; line-height: 17px; color: var(--ink4); }
 .myd-gal-empty-hint { color: var(--ink4); font-size: 12px; }
 
 /* 图库「铺开」：一块能拖、能缩放的画布，图片按原比例摆着 */
@@ -1109,3 +1107,85 @@ button.myd-receipt:hover { transform: translateX(2px); }
 
 /* 二级页头部把删除键推到最右 */
 .myd-head-gap { flex: 1; min-width: 0; }
+
+/* 对话里的参考图：待发的缩略图条、已经发出去的缩略图 */
+.myd-composer-refs { flex: 0 0 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 0 0 6px; }
+.myd-composer-refs-label { font-size: 11.5px; color: var(--ink3); }
+.myd-ref-chip { position: relative; width: 40px; height: 40px; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 .5px var(--line-strong); flex: none; }
+.myd-ref-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.myd-ref-chip button { position: absolute; top: 1px; right: 1px; width: 15px; height: 15px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: rgb(0 0 0 / .55); }
+.myd-ref-chip button:hover { background: rgb(0 0 0 / .8); }
+.myd-msg-refs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
+.myd-msg-refs img { width: 54px; height: 54px; object-fit: cover; border-radius: 7px; box-shadow: 0 0 0 .5px var(--line-strong); display: block; }
+.myd-msg.is-user { display: block; }
+.myd-bd-btn.is-primary { color: var(--on-primary); background: var(--primary); }
+.myd-bd-btn.is-primary:hover { background: var(--primary-hover); }
+
+/* 图库右栏：生图对话 */
+.myd-gal-chat-head { flex: none; display: flex; align-items: center; gap: 6px; height: 26px; color: var(--ink4); }
+.myd-gal-chat-head h3 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .01em; color: var(--ink); }
+.myd-gal-cap { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; line-height: 15px; color: var(--ink4); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.myd-gal-cap.is-on { color: color-mix(in srgb, var(--primary) 78%, var(--ink)); background: color-mix(in srgb, var(--primary) 14%, transparent); }
+
+.myd-gal-thread { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px 6px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+/* 消息少的时候贴着输入框往上排，别悬在顶上留一大片空 */
+.myd-gal-thread > .myd-gal-bubble:first-child { margin-top: auto; }
+.myd-gal-thread-empty { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; padding: 14px 13px; border-radius: 12px; border: .5px dashed color-mix(in srgb, var(--ink) 16%, transparent); }
+.myd-gal-thread-empty p { margin: 0; font-size: 12.5px; line-height: 19px; color: var(--ink2); }
+.myd-gal-thread-tip { font-size: 11.5px; line-height: 18px; color: var(--ink4); }
+
+.myd-gal-bubble { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.myd-gal-bubble.is-user { align-items: flex-end; }
+.myd-gal-bubble-text { margin: 0; max-width: 92%; padding: 7px 11px; border-radius: 12px; font-size: 12.5px; line-height: 19px; white-space: pre-wrap; word-break: break-word; }
+.myd-gal-bubble.is-user .myd-gal-bubble-text { border-bottom-right-radius: 4px; background: color-mix(in srgb, var(--ink) 11%, transparent); color: var(--ink); }
+.myd-gal-bubble.is-assistant .myd-gal-bubble-text { padding: 0 2px; border-radius: 0; background: none; color: var(--ink2); }
+.myd-gal-bubble-error { margin: 0; max-width: 100%; padding: 7px 10px; border-radius: 10px; background: color-mix(in srgb, #d64545 12%, transparent); color: #d64545; font-size: 12px; line-height: 18px; word-break: break-word; }
+.myd-gal-bubble.is-wait { flex-direction: row; align-items: center; gap: 8px; font-size: 12px; color: var(--ink4); }
+.myd-gal-bubble.is-wait em { font-style: normal; font-size: 11.5px; }
+.myd-gal-bubble-refs, .myd-gal-bubble-shots { display: flex; flex-wrap: wrap; gap: 5px; }
+.myd-gal-bubble-shots { width: 100%; }
+
+.myd-gal-link { position: relative; width: 52px; height: 52px; flex: none; }
+.myd-gal-link-shot { display: block; width: 100%; height: 100%; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 .5px var(--line-strong); }
+.myd-gal-link-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.myd-gal-link-shot:hover img { opacity: .88; }
+.myd-gal-link-drop { position: absolute; top: -5px; right: -5px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; color: var(--bg); background: color-mix(in srgb, var(--ink) 78%, transparent); }
+
+.myd-gal-composer { flex: none; display: flex; flex-direction: column; gap: 7px; padding-top: 9px; border-top: .5px solid var(--line); }
+.myd-gal-attached { display: flex; flex-wrap: wrap; gap: 5px; }
+.myd-gal-attached-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; height: 26px; padding: 0 4px 0 3px; border-radius: 7px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.myd-gal-attached-shot { display: block; flex: none; width: 20px; height: 20px; border-radius: 5px; overflow: hidden; }
+.myd-gal-attached-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.myd-gal-attached-label { font-size: 11px; line-height: 16px; color: var(--ink2); max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.myd-gal-attached-drop { display: grid; place-items: center; flex: none; width: 15px; height: 15px; border-radius: 50%; color: var(--ink4); }
+.myd-gal-attached-drop:hover { color: var(--ink); background: var(--hover); }
+
+.myd-gal-chips { display: flex; flex-wrap: wrap; gap: 5px; max-height: 54px; overflow: hidden; }
+.myd-gal-chip { flex: none; display: inline-flex; align-items: center; justify-content: center; height: 23px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; line-height: 1; color: var(--ink3); background: color-mix(in srgb, var(--ink) 4%, transparent); box-shadow: inset 0 0 0 .5px var(--line); }
+.myd-gal-chip:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
+.myd-gal-chip:disabled { opacity: .45; }
+
+/* 输入盒：输入框 + 参数行合成一个整体，别再排成三根横条 */
+.myd-gal-box { display: flex; flex-direction: column; border-radius: 13px; background: color-mix(in srgb, var(--ink) 3.5%, var(--card)); box-shadow: 0 0 0 .5px var(--line); transition: box-shadow .16s var(--ease); }
+.myd-gal-box:focus-within { box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 44%, var(--line)); }
+.myd-gal-input { width: 100%; min-height: 52px; max-height: 120px; padding: 9px 11px 5px; border: 0; outline: none; background: none; resize: none; overflow-y: auto; font: inherit; font-size: 12.5px; line-height: 19px; color: var(--ink); scrollbar-width: thin; }
+.myd-gal-input::placeholder { color: var(--ink4); }
+.myd-gal-row { display: flex; align-items: center; gap: 7px; padding: 0 8px 7px; }
+.myd-gal-row-label { flex: none; width: 22px; font-size: 10.5px; line-height: 16px; color: var(--ink4); }
+.myd-gal-pills { display: flex; gap: 3px; flex: 1; min-width: 0; }
+.myd-gal-pills button { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; height: 22px; padding: 0 2px; border-radius: 6px; font-size: 10.5px; line-height: 1; color: var(--ink3); box-shadow: inset 0 0 0 .5px var(--line-strong); }
+.myd-gal-pills button:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
+.myd-gal-pills button.is-on { color: var(--on-primary); background: var(--primary); box-shadow: none; }
+.myd-gal-pills button:disabled { opacity: .45; }
+.myd-gal-pills.is-short { flex: none; width: 78px; }
+.myd-gal-send { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: var(--on-primary); }
+.myd-gal-send svg { display: block; }
+.myd-gal-send:hover:not(:disabled) { background: var(--primary-hover); }
+.myd-gal-send:disabled { color: var(--ink4); background: color-mix(in srgb, var(--ink) 9%, transparent); cursor: default; }
+.myd-gal-send-wait { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--on-primary) 45%, transparent); border-top-color: var(--on-primary); animation: myd-spin .8s linear infinite; }
+.myd-gal-note { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; line-height: 15px; color: var(--ink4); }
+.myd-gal-note.is-off { color: color-mix(in srgb, #c98d4a 76%, var(--ink4)); }
+@keyframes myd-spin { to { transform: rotate(360deg); } }
+@container myd-root (max-width: 760px) {
+  .myd-gal-panel { width: auto; max-height: 58%; min-height: 44%; border-left: 0; border-top: .5px solid var(--line); }
+}

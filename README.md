@@ -86,10 +86,10 @@
 
 - 图库卡片本身就是容器：图全存在 `item.art.variants` 里（跟图片二创同一个字段、同一套 `variantAction`），`item.media.src` 用第一张当封面。所以撤销、导出、备份都不用改。
 - 画布上的卡片是四宫格预览（`client/card.jsx` 的 `GalleryCover`），没图时写「空的图库」，超过 4 张时右下角标总数。
-- 二级页铺满屏幕，比例照图片二创页：左边 `flex:1` 收图，右边 336px 面板（`client/gallery.jsx`）。左栏每张图悬停出三个按钮（看大图 / 设为封面 / 删掉），点整张就「选中当参考」（角标「参考图」），再点一次取消。
-- 右侧：一句话提示词 + 六个快捷想法 + 画幅（默认/1:1/3:4/4:3/9:16/16:9）+ 这次画几张（1/2/4）+ 「画出来」；有参考图时改图（`edit_image`），没有就文生图（`generate_image`）。
+- 二级页铺满屏幕，比例照图片二创页：左边 `flex:1` 收图，右边 336px 面板（`client/gallery.jsx`）。左栏每张图悬停出三个动作（看大图 / 设为封面 / 删掉），点整张就「加进参考」（角标「参考图」），再点一次取消。
+- 右栏是一条**生图对话**（不再是长表单）：上面滚着聊过的话，下面一个输入框。说一句就画，画好的图以缩略图挂在那句回答下面，同时落回左边；带参考图时接着它们改（`edit_image`），没有就文生图（`generate_image`）。输入框旁边还能改画幅（默认/1:1/3:4/4:3/9:16/16:9）和这次画几张（1/2/4）。
 - 本地图片有两种进图库的方式，都不经过生图模型：**把图片拖到页面上**（松手处有虚线框提示，一次最多 24 张）、或者 **Ctrl+V 粘贴截图**（只认剪贴板里的图片，粘文字照常）。先走原有的 `POST /mydesk/upload` 落到 `files/`，再用 `POST /mydesk/art/add` 挂成一版（`mode: 'upload'`）；同一张重复拖不会收两次。图库本来没有封面时，收进来的第一张当封面。
-- 后端一条接口：`POST /mydesk/art/gallery`（`src/art.js` 的 `galleryMake`），一次最多画 4 张，`item.art.variants` 最多留 120 张（`GALLERY_MAX`）；单张失败只交成功的那些，全失败才报错。
+- 后端一条接口：`POST /mydesk/art/gallery`（`src/art.js` 的 `galleryMake`），body 是 `{ id, text, ratio?, count?, refs? }`，一次最多画 4 张，`item.art.variants` 最多留 120 张（`GALLERY_MAX`），`item.art.thread` 最多留 60 条（`THREAD_MAX`）。用户那句和回答都记在 thread 里（用户条目带 `refs`、回答条目带 `added` 的变体 id 或 `error`），所以刷新后对话还在。单张失败只交成功的那些，全失败也只在对话里留一条红字，不抛错。
 - 文生图工具的参数按工具自己的声明来发：`drawArgs()` 看到 `aspect_ratio` 就传画幅，只认 `size` 就把画幅映射成 `SIZE_OF` 里的 `1024x1024 / 1536x1024 / 1024x1536`，枚举里没有就退 `auto`。
 - 助手也能建图库：`add_item { kind: 'gallery' }`（`src/ops.js` 的 `KINDS`、`src/ai.js` 的 `OP_DOC` 已同步）。
 - 左栏有**两种预览模式**（头部「预览模式」切换，选择会存在卡片上）：「缩略图」是一张张方图排下去；「铺开」把整个左栏变成一块能拖能缩的画布（`client/board.jsx` 的 `GalleryBoard`），图片按**原始比例**摆着，不裁不缩。
@@ -103,6 +103,22 @@
   - 落盘：位置/缩放/平移存在 `item.art.board`（`normalizeBoard` 会把越界值夹回来、最多 300 条），改完 700ms 防抖存一次，走 `POST /mydesk/art/board`，**不进撤销栈**（排版不算内容改动），刷新后回来还是原样。
   - 撤销：正因为排版不进插件的撤销栈，画布自己留了一份历史——拖动（真挪动过才算）、对齐、均分、组合/取消组合、方向键微移各算一步，`Ctrl/Cmd+Z` 撤、`Ctrl/Cmd+Shift+Z`（或 `Ctrl+Y`）重做，底部条也有两个按钮。这两个键在**捕获阶段**被画布接住并 `stopImmediatePropagation`，所以不会冒泡去撤插件根画布上的卡片；焦点在输入框里时不抢（那里该撤的是打的字）。历史只存在内存里（最多 60 步），刷新即清空。
   - 新图第一次进「铺开」时按原比例自动货架式排一下（行宽 1480，行距 26），已经在画布上的图不会被重排。
+
+## 已经加的功能：图库右栏的生图对话（图怎么变成参考图）
+
+「把图交给模型」在图库里是**就地**完成的，不用离开二级页、也不走主画布右侧那个助手。
+
+- 带参考图：缩略图模式下点任意一张图（角标「参考图」）、或用每张图悬停动作里的「放进生图对话」、或铺开模式选中若干张后按底部条的「放进生图对话」。图会以圆角小图挂在输入框上方（每张带「第 N 张」和移除键，最多 4 张，重复的自动去掉），下面写一句「换成夜景，人物不变」就能发。
+- 只写一句话不带图也行；一个字都不写但有参考图时，默认发「照着这几张画」。
+- 发出去后：你这句话进对话、`busy` 时显示「正在画… N 秒」、画好的图挂在回答下面并同时进左栏；失败时回答下面是一行红字（把上游的错误原文带出来），不会打断对话。
+- 参考图优先级（`src/art.js` 的 `pickSourceWith`）：这条消息里带的参考图 → 卡片上选中的那一版 → 封面 → 最后一版。
+- 只认插件自己目录里的图（`mydesk/files/...`，走 `sourcePathOf` + `readImageFile`，单张 ≤ 40MB）。
+- 数据结构：`item.art.thread` 是 `[{ id, at, role: 'user' | 'assistant', text, refs?, added?, error? }]`，落盘走同一个 `store.mutate`（`undoable: false`，排版/对话本身不进撤销栈），撤销卡片时整条对话一起走。
+- 主画布的对话接口仍然保留这项能力（图库自己不再用它）：`POST /mydesk/chat` 的 `refs`（字符串数组或 `{ src, label, prompt }`）由 `src/refs.js` 的 `resolveRefs` 读成字节、`ctx.attachments.saveImage` 存成附件，再包成模型的 image block（`{ type: 'image', attachment }`）；`src/ai.js` 的 `callModel` 收 `images` 并看 `call.inputModalities` 有没有 `'image'` 决定发不发图。模型不吃图时只发文字并注明「当前模型不能看图…」；模型没声明能力时先试带图、被拒再退回纯文字（只在第一次失败时重试）。对话记录里也存 `refs`，刷新后气泡上仍有缩略图。
+- 右栏的排版（`client/gallery.jsx` + `styles.css` 末尾「图库右栏：生图对话」）：`.myd-gal-panel` 固定 336px、`flex-direction: column`，从下往上依次是 `.myd-gal-composer`（参考图 chip → `.myd-gal-box` 输入盒 → 快捷词 → 说明）、滚动的 `.myd-gal-thread`、`.myd-gal-chat-head`。输入盒里**只有一个** `textarea.myd-gal-input`（`border: 0; outline: none`，聚焦由 `.myd-gal-box:focus-within` 描一圈很淡的主色），画幅/张数是盒内两行 `.myd-gal-row`，发送键在第二行右端。
+- 气泡贴底靠 `.myd-gal-thread > .myd-gal-bubble:first-child { margin-top: auto }`，**不要**把线程改成 `justify-content: flex-end`（那样消息多时顶部会被裁掉）。
+- 输入框的蓝色方框：全局有 `.myd-root :focus-visible { outline: 2px solid var(--accent) }`（用于键盘导航），它比 `.myd-gal-input { outline: none }` 的优先级高，所以点进输入框还是会出浏览器那种方框。现在统一写成 `.myd-root textarea:focus-visible, .myd-root textarea:focus { outline: none; }`（特异性 0,2,1，压过 0,2,0），文本域聚焦只由所在容器的描边表示（`.myd-gal-box:focus-within`）。用无头 Chrome + `autofocus` 可以验证：改前 `outlineWidth=2px style=solid`，改后 `style=none`。
+- 踩过的坑：改右栏 JSX 时漏删了上一版的 `<textarea id="myd-gal-prompt" className="myd-art-input">`，面板里就出现两个输入框，点旧的那个还会冒浏览器默认焦点框（`.myd-art-input` 没有 `outline: none`）。用 `edit` 替换大段 JSX 时 `old_string` 要从「上一个不打算保留的元素」起头，改完 `Select-String -Path client\gallery.jsx -Pattern 'myd-gal-'` 数一遍，确认 `myd-gal-prompt` 只有一处。
 
 ## 已经加的功能：生图来源多一档「桥接到 image-gen」
 
@@ -130,6 +146,7 @@ src/            host 半片：Node 侧。路由、存储、AI 调用、导出、
   image-tool.js 把订阅画图能力包成一个 DSH 工具给模型用
   bridge.js     「桥接到 image-gen」：内置转调 generate_image（不需要额外插件）
   tool-run.js   调别的插件的工具：直接执行工具体，避开需要真实会话的策略钩子
+  refs.js       对话里的参考图：校验、去重、存成附件、写进提示词
   art.js        图片二创与图库连画：替身 agent 调 edit_image / generate_image
   i18n.js       中英切换（英文词典在 src/en.js）
 client/         浏览器半片源码（jsx + styles.css），ESM 源码，不是最终产物
@@ -149,7 +166,7 @@ history.js    画布自己的撤销栈（压栈 / 连续微移合并 / 撤销重
   en/           英文词典（key 是中文原文）
 dist/client.js  打包产物：npm run build 生成，别手改
 assets/         示例图与素材（打包进插件）
-test/           node --test 测试，162 条全绿
+test/           node --test 测试，170 条全绿
 scripts/        构建（build.mjs）与本地开发工具（mock 模型、mock monid、沙箱启动）
 ```
 
@@ -161,7 +178,7 @@ scripts/        构建（build.mjs）与本地开发工具（mock 模型、mock 
 npm install        # 只需要一次，装 esbuild
 npm run build      # 改完 client/ 里的东西必须跑，产出 dist/client.js
 npm run watch      # 边改边构建
-npm test           # 162 条测试
+npm test           # 170 条测试
 ```
 
 改完怎么生效：
@@ -192,10 +209,10 @@ CSS 前缀是 `myd-` 不是 `md-`：两个插件同时加载，样式都在全�
 
 ## 版本
 
-当前版本 **2.8.3**。装法两种，任选：
+当前版本 **2.8.4**。装法两种，任选：
 
 ```bash
-npm i dsh-mydesk@2.8.3        # 从 npm 装（包内含 src/ client/ scripts/ dist/，可以继续改界面源码）
+npm i dsh-mydesk@2.8.4        # 从 npm 装（包内含 src/ client/ scripts/ dist/，可以继续改界面源码）
 # 或在 DSH 里让 agent 用 plugin_manager install_bundle 指向本地解压后的目录
 ```
 
@@ -207,6 +224,7 @@ npm i dsh-mydesk@2.8.3        # 从 npm 装（包内含 src/ client/ scripts/ di
 | 2.8.1 | 「桥接到 image-gen」改成**内置**（`src/bridge.js`，不用再装中转插件）；改成直接执行工具体（`src/tool-run.js`），绕开需要真实会话的 Auto 复核——修掉 `session.snapshotEvents is not a function` |
 | 2.8.2 | 删除卡片：右键菜单（`client/menu.jsx`）、悬停删除钮、`Delete`/`Backspace`、各二级页头部删除 |
 | 2.8.3 | 「铺开」画布：框选 / Shift 追加、`Ctrl+A` 全选、`Esc` 清空、多选整组拖动（`client/select.js` 的 `dragTarget`）、右键或空格平移、图片间吸附（`client/snap.js`）、画布自己的撤销重做（`client/history.js`，`Ctrl+Z` / `Ctrl+Shift+Z`）、去掉空格时的白框 |
+| 2.8.4 | 图库右栏从长表单改成**生图对话**（`client/gallery.jsx` 重写 + `src/art.js` 的 `item.art.thread`）：说的话、画的图都留在对话里，失败只在气泡下留红字；图库里的图点一下就挂到输入框上方当参考（`src/refs.js`，最多 4 张，模型看不了图时如实说明）；输入盒重排（画幅/张数/发送键收进盒内，快捷词移到盒下），修掉上一版漏删的第二个输入框与输入框聚焦时的蓝色方框 |
 
 排障：`npm i dsh-mydesk` 装到的版本比 npm 上旧，多半是镜像或缓存——`npm view dsh-mydesk version --prefer-online`，再用 `npm i dsh-mydesk@latest --prefer-online`；国内镜像可 `PUT https://registry.npmmirror.com/dsh-mydesk/sync?sync_upstream=true` 触发同步。
 
